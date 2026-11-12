@@ -26,6 +26,18 @@ export function createOpenApiPlugin(env: Pick<BackendEnv, "ENABLE_SWAGGER" | "SE
           name: "Auth",
           description: "Autentikasi berbasis session cookie dan informasi pengguna aktif",
         },
+        {
+          name: "Users",
+          description: "Manajemen pengguna dan reset password (khusus Admin)",
+        },
+        {
+          name: "Categories",
+          description: "Manajemen kategori produk",
+        },
+        {
+          name: "Products",
+          description: "Manajemen katalog produk dan batas minimum stok",
+        },
       ],
       components: {
         securitySchemes: {

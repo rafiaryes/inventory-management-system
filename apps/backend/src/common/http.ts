@@ -9,8 +9,8 @@ export interface ApiSuccessResponse<T> {
 
 export interface PaginationMeta {
   page: number;
-  limit: number;
-  total: number;
+  pageSize: number;
+  totalItems: number;
   totalPages: number;
 }
 
@@ -96,6 +96,13 @@ export const errorEnvelopeSchema = t.Object({
   }),
 });
 
+export const paginationMetaSchema = t.Object({
+  page: t.Integer({ minimum: 1 }),
+  pageSize: t.Integer({ minimum: 1, maximum: 100 }),
+  totalItems: t.Integer({ minimum: 0 }),
+  totalPages: t.Integer({ minimum: 0 }),
+});
+
 /**
  * Builds an OpenAPI-compatible TypeBox schema for a standard success response.
  */
@@ -104,5 +111,17 @@ export function createSuccessSchema<T extends TSchema>(dataSchema: T) {
     success: t.Literal(true),
     message: t.String(),
     data: dataSchema,
+  });
+}
+
+/**
+ * Builds an OpenAPI-compatible TypeBox schema for a standard paginated list response.
+ */
+export function createPaginatedSchema<T extends TSchema>(itemSchema: T) {
+  return t.Object({
+    success: t.Literal(true),
+    message: t.String(),
+    data: t.Array(itemSchema),
+    meta: paginationMetaSchema,
   });
 }

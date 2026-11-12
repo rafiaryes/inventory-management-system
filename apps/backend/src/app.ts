@@ -8,6 +8,15 @@ import {
 import { createAuthRepository } from "./modules/auth/auth.repository";
 import { createAuthRoutes } from "./modules/auth/auth.route";
 import { createAuthService } from "./modules/auth/auth.service";
+import { createCategoriesRepository } from "./modules/categories/categories.repository";
+import { createCategoriesRoutes } from "./modules/categories/categories.route";
+import { createCategoriesService } from "./modules/categories/categories.service";
+import { createProductsRepository } from "./modules/products/products.repository";
+import { createProductsRoutes } from "./modules/products/products.route";
+import { createProductsService } from "./modules/products/products.service";
+import { createUsersRepository } from "./modules/users/users.repository";
+import { createUsersRoutes } from "./modules/users/users.route";
+import { createUsersService } from "./modules/users/users.service";
 import { createAuthPlugin } from "./plugins/auth";
 import { createCorsPlugin } from "./plugins/cors";
 import { createCsrfPlugin } from "./plugins/csrf";
@@ -45,10 +54,35 @@ export function createApp(deps: AppDependencies = {}) {
   const authPlugin = createAuthPlugin({ authService, env });
   const authRoutes = createAuthRoutes({ authService, authPlugin, env });
 
+  const usersRepository = createUsersRepository(database);
+  const usersService = createUsersService({
+    repository: usersRepository,
+    authRepository,
+  });
+  const usersRoutes = createUsersRoutes({ usersService, authPlugin, env });
+
+  const categoriesRepository = createCategoriesRepository(database);
+  const categoriesService = createCategoriesService(categoriesRepository);
+  const categoriesRoutes = createCategoriesRoutes({
+    categoriesService,
+    authPlugin,
+  });
+
+  const productsRepository = createProductsRepository(database);
+  const productsService = createProductsService(productsRepository);
+  const productsRoutes = createProductsRoutes({
+    productsService,
+    authPlugin,
+  });
+
   const v1Routes = new Elysia({
     name: "api-v1",
     prefix: "/api/v1",
-  }).use(authRoutes);
+  })
+    .use(authRoutes)
+    .use(usersRoutes)
+    .use(categoriesRoutes)
+    .use(productsRoutes);
 
   return new Elysia()
     .use(requestIdPlugin)
