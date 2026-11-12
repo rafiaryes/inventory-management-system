@@ -1,18 +1,30 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { useAuth } from "@/hooks/use-auth";
+
 export default function HomePage() {
+  const { status } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace("/dashboard");
+    } else if (status === "unauthenticated") {
+      router.replace("/login");
+    }
+  }, [status, router]);
+
   return (
-    <main className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-16 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <section className="w-full max-w-xl rounded-xl border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          Stage 1 · Repository Setup
-        </p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          Inventory Management System
-        </h1>
-        <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-          Frontend workspace is initialized with Next.js, TypeScript, and
-          Tailwind CSS.
-        </p>
-      </section>
+    <main className="flex flex-1 items-center justify-center bg-slate-50 px-4">
+      <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-5 py-3.5 text-sm text-slate-600 shadow-sm">
+        <span
+          className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900"
+          aria-hidden="true"
+        />
+        <span>Memuat aplikasi Inventory Management System...</span>
+      </div>
     </main>
   );
 }
