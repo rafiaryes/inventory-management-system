@@ -1,24 +1,37 @@
 import { createApp } from "./app";
+import { getEnv } from "./config/env";
+import { closeDatabase } from "./db";
 
-const DEFAULT_PORT = 3001;
-
-function resolvePort(rawPort: string | undefined): number {
-  const normalized = rawPort?.trim();
-  if (!normalized) {
-    return DEFAULT_PORT;
-  }
-
-  const parsed = Number(normalized);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`Invalid PORT environment variable: "${rawPort}"`);
-  }
-
-  return parsed;
-}
-
-const port = resolvePort(process.env.PORT);
-const app = createApp().listen(port);
+const env = getEnv();
+const app = createApp().listen(env.PORT);
 
 console.log(
-  `IMS backend listening at http://${app.server?.hostname}:${app.server?.port}`,
+  `IMS backend (${env.NODE_ENV}) listening at http://${app.server?.hostname}:${app.server?.port}`,
 );
+
+let isShuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    return;
+  }
+  isShuttingDown = true;
+  console.log(`Received ${signal}, shutting down IMS backend...`);
+
+  try {
+    await app.stop(true);
+    await closeDatabase();
+    process.exit(0);
+  } catch (error) {
+    console.error("Error during shutdown:", error);
+    process.exit(1);
+  }
+}
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});

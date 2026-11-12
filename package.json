@@ -14,6 +14,11 @@
     "typecheck": "bun run typecheck:backend && bun run typecheck:frontend",
     "typecheck:backend": "bun --filter backend typecheck",
     "typecheck:frontend": "bun --filter frontend typecheck",
-    "lint:frontend": "bun --filter frontend lint"
+    "lint:frontend": "bun --filter frontend lint",
+    "test:backend": "bun --filter backend test",
+    "db:generate": "bun --filter backend db:generate",
+    "db:migrate": "bun --filter backend db:migrate",
+    "db:check": "bun --filter backend db:check",
+    "db:seed": "bun --filter backend db:seed"
   }
 }
