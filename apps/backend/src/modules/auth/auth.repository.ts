@@ -10,8 +10,8 @@ export interface AuthRepository {
   createSession(input: {
     userId: string;
     tokenHash: string;
-    expiresAt: Date;
-  }): Promise<{ id: string }>;
+    ttlDays: number;
+  }): Promise<{ id: string; expiresAt: Date }>;
   findActiveSessionByTokenHash(
     tokenHash: string,
   ): Promise<ActiveSessionRecord | null>;
@@ -49,16 +49,23 @@ export function createAuthRepository(db: Database): AuthRepository {
     async createSession(input: {
       userId: string;
       tokenHash: string;
-      expiresAt: Date;
-    }): Promise<{ id: string }> {
+      ttlDays: number;
+    }): Promise<{ id: string; expiresAt: Date }> {
+      if (!Number.isInteger(input.ttlDays) || input.ttlDays < 1) {
+        throw new Error(`Invalid session ttlDays: ${input.ttlDays}`);
+      }
+
       const rows = await db
         .insert(sessions)
         .values({
           userId: input.userId,
           tokenHash: input.tokenHash,
-          expiresAt: input.expiresAt,
+          expiresAt: sql`NOW() + make_interval(days => ${input.ttlDays}::int)`,
         })
-        .returning({ id: sessions.id });
+        .returning({
+          id: sessions.id,
+          expiresAt: sessions.expiresAt,
+        });
 
       const created = rows[0];
       if (!created) {

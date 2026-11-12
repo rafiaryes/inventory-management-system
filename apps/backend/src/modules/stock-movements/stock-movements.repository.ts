@@ -226,13 +226,12 @@ export function createStockMovementsRepository(
         }
 
         const stockAfter = formatScaledDecimal(stockAfterScaled, STOCK_SCALE);
-        const now = new Date();
 
         await tx
           .update(products)
           .set({
             currentStock: stockAfter,
-            updatedAt: now,
+            updatedAt: sql`NOW()`,
           })
           .where(eq(products.id, product.id));
 

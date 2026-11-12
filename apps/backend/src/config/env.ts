@@ -1,3 +1,5 @@
+import { parseTrustedProxyCidr } from "../common/security";
+
 export const NODE_ENVS = ["development", "test", "production"] as const;
 export type NodeEnv = (typeof NODE_ENVS)[number];
 
@@ -14,6 +16,7 @@ export interface BackendEnv {
   SESSION_TTL_DAYS: number;
   COOKIE_SECURE: boolean;
   COOKIE_SAME_SITE: CookieSameSite;
+  TRUSTED_PROXY_IPS: string[];
   LOGIN_RATE_LIMIT_MAX: number;
   LOGIN_RATE_LIMIT_WINDOW_SECONDS: number;
   ENABLE_SWAGGER: boolean;
@@ -137,6 +140,19 @@ function parseCorsAllowedOrigins(rawValue: string | undefined): string[] {
   return [...uniqueOrigins];
 }
 
+function parseTrustedProxyIps(rawValue: string | undefined): string[] {
+  if (rawValue === undefined || rawValue.trim().length === 0) {
+    return [];
+  }
+
+  const uniqueEntries = new Set<string>();
+  for (const segment of rawValue.split(",")) {
+    const parsedRule = parseTrustedProxyCidr(segment);
+    uniqueEntries.add(parsedRule.raw);
+  }
+  return [...uniqueEntries];
+}
+
 /**
  * Parses and validates backend startup environment variables.
  */
@@ -209,6 +225,8 @@ export function parseEnv(
     throw new Error("COOKIE_SAME_SITE=none requires COOKIE_SECURE=true");
   }
 
+  const trustedProxyIps = parseTrustedProxyIps(raw.TRUSTED_PROXY_IPS);
+
   const loginRateLimitMax = parsePositiveInteger(
     raw.LOGIN_RATE_LIMIT_MAX,
     DEFAULT_LOGIN_RATE_LIMIT_MAX,
@@ -237,6 +255,7 @@ export function parseEnv(
     SESSION_TTL_DAYS: sessionTtlDays,
     COOKIE_SECURE: cookieSecure,
     COOKIE_SAME_SITE: cookieSameSite,
+    TRUSTED_PROXY_IPS: trustedProxyIps,
     LOGIN_RATE_LIMIT_MAX: loginRateLimitMax,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: loginRateLimitWindowSeconds,
     ENABLE_SWAGGER: enableSwagger,

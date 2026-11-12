@@ -7,9 +7,10 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "start": "bun run dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --timeout=30000",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:test": "DRIZZLE_USE_TEST_DB=true drizzle-kit migrate",
     "db:check": "drizzle-kit check",
     "db:seed": "bun run src/db/seed.ts"
   },

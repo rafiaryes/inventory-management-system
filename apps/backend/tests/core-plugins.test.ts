@@ -10,14 +10,15 @@ function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 10,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,

@@ -19,6 +19,7 @@ describe("parseEnv", () => {
       SESSION_TTL_DAYS: 7,
       COOKIE_SECURE: false,
       COOKIE_SAME_SITE: "lax",
+      TRUSTED_PROXY_IPS: [],
       LOGIN_RATE_LIMIT_MAX: 10,
       LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
       ENABLE_SWAGGER: true,
@@ -34,6 +35,7 @@ describe("parseEnv", () => {
 
     expect(parsed.COOKIE_SECURE).toBe(true);
     expect(parsed.ENABLE_SWAGGER).toBe(false);
+    expect(parsed.TRUSTED_PROXY_IPS).toEqual([]);
     expect(parsed.CORS_ALLOWED_ORIGINS).toEqual([
       "https://ims.example.com",
       "https://admin.example.com",
@@ -129,5 +131,40 @@ describe("parseEnv", () => {
         ENABLE_SWAGGER: "yes",
       }),
     ).toThrow("Invalid ENABLE_SWAGGER");
+
+    expect(
+      parseEnv({
+        DATABASE_URL: VALID_DATABASE_URL,
+        TRUSTED_PROXY_IPS: "127.0.0.1, 10.0.0.0/8, ::1, 2001:db8::/32, 127.0.0.1",
+      }).TRUSTED_PROXY_IPS,
+    ).toEqual(["127.0.0.1", "10.0.0.0/8", "::1", "2001:db8::/32"]);
+
+    expect(
+      parseEnv({
+        DATABASE_URL: VALID_DATABASE_URL,
+        TRUSTED_PROXY_IPS: "   ",
+      }).TRUSTED_PROXY_IPS,
+    ).toEqual([]);
+
+    expect(() =>
+      parseEnv({
+        DATABASE_URL: VALID_DATABASE_URL,
+        TRUSTED_PROXY_IPS: "localhost",
+      }),
+    ).toThrow("Invalid TRUSTED_PROXY_IPS");
+
+    expect(() =>
+      parseEnv({
+        DATABASE_URL: VALID_DATABASE_URL,
+        TRUSTED_PROXY_IPS: "10.0.0.0/33",
+      }),
+    ).toThrow("CIDR prefix out of range");
+
+    expect(() =>
+      parseEnv({
+        DATABASE_URL: VALID_DATABASE_URL,
+        TRUSTED_PROXY_IPS: "127.0.0.1,",
+      }),
+    ).toThrow("empty entries");
   });
 });

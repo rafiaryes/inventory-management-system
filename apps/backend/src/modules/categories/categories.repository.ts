@@ -137,7 +137,7 @@ export function createCategoriesRepository(db: Database): CategoriesRepository {
                 changes.description !== undefined
                   ? changes.description
                   : existing.description,
-              updatedAt: new Date(),
+              updatedAt: sql`NOW()`,
             })
             .where(eq(categories.id, id))
             .returning();
@@ -180,7 +180,7 @@ export function createCategoriesRepository(db: Database): CategoriesRepository {
           .update(categories)
           .set({
             isActive,
-            updatedAt: new Date(),
+            updatedAt: sql`NOW()`,
           })
           .where(eq(categories.id, id))
           .returning();

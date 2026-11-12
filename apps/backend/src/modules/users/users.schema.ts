@@ -33,28 +33,40 @@ export const listUsersQuerySchema = t.Object({
   sortOrder: t.Optional(t.String()),
 });
 
-export const createUserBodySchema = t.Object({
-  name: t.String({ minLength: 1, maxLength: 150 }),
-  email: t.String({ minLength: 1, maxLength: 255, format: "email" }),
-  password: t.String({ minLength: 8, maxLength: 128 }),
-  role: t.Union([t.Literal("admin"), t.Literal("staff")]),
-});
+export const createUserBodySchema = t.Object(
+  {
+    name: t.String({ minLength: 1, maxLength: 150 }),
+    email: t.String({ minLength: 1, maxLength: 255, format: "email" }),
+    password: t.String({ minLength: 8, maxLength: 128 }),
+    role: t.Union([t.Literal("admin"), t.Literal("staff")]),
+  },
+  { additionalProperties: false },
+);
 
-export const updateUserBodySchema = t.Object({
-  name: t.Optional(t.String({ minLength: 1, maxLength: 150 })),
-  email: t.Optional(
-    t.String({ minLength: 1, maxLength: 255, format: "email" }),
-  ),
-  role: t.Optional(t.Union([t.Literal("admin"), t.Literal("staff")])),
-});
+export const updateUserBodySchema = t.Object(
+  {
+    name: t.Optional(t.String({ minLength: 1, maxLength: 150 })),
+    email: t.Optional(
+      t.String({ minLength: 1, maxLength: 255, format: "email" }),
+    ),
+    role: t.Optional(t.Union([t.Literal("admin"), t.Literal("staff")])),
+  },
+  { additionalProperties: false },
+);
 
-export const updateUserStatusBodySchema = t.Object({
-  isActive: t.Boolean(),
-});
+export const updateUserStatusBodySchema = t.Object(
+  {
+    isActive: t.Boolean(),
+  },
+  { additionalProperties: false },
+);
 
-export const resetUserPasswordBodySchema = t.Object({
-  newPassword: t.String({ minLength: 8, maxLength: 128 }),
-});
+export const resetUserPasswordBodySchema = t.Object(
+  {
+    newPassword: t.String({ minLength: 8, maxLength: 128 }),
+  },
+  { additionalProperties: false },
+);
 
 export const userListResponseSchema = createPaginatedSchema(userDtoSchema);
 export const userDetailResponseSchema = createSuccessSchema(userDtoSchema);

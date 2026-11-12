@@ -1,3 +1,8 @@
+export const PG_ERROR_CODES = {
+  UNIQUE_VIOLATION: "23505",
+  DEADLOCK_DETECTED: "40P01",
+} as const;
+
 export interface PgErrorDetails {
   code?: string;
   constraint?: string;
@@ -51,7 +56,7 @@ export function isUniqueViolation(
   constraintName?: string,
 ): boolean {
   const pg = extractPgError(error);
-  if (pg.code !== "23505") {
+  if (pg.code !== PG_ERROR_CODES.UNIQUE_VIOLATION) {
     return false;
   }
 
@@ -60,4 +65,16 @@ export function isUniqueViolation(
   }
 
   return true;
+}
+
+/**
+ * Returns true if the error represents a PostgreSQL transaction deadlock (`40P01`).
+ *
+ * Deadlocks are NOT blindly mapped globally to HTTP `409 STATE_CONFLICT` because `40P01`
+ * indicates a lock-ordering or transient serialization failure across transactions rather
+ * than a deterministic domain state conflict; callers should prevent deadlocks via
+ * consistent lock ordering (e.g., `pg_advisory_xact_lock`) instead of masking them.
+ */
+export function isDeadlockDetected(error: unknown): boolean {
+  return extractPgError(error).code === PG_ERROR_CODES.DEADLOCK_DETECTED;
 }

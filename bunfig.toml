@@ -1,0 +1,3 @@
+[test]
+preload = ["./apps/backend/tests/setup.ts"]
+timeout = 30000

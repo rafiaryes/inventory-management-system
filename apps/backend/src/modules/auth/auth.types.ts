@@ -25,7 +25,7 @@ export interface ActiveSessionRecord {
 export interface LoginInput {
   email: string;
   password: string;
-  clientIp: string;
+  clientIp: string | null;
 }
 
 export interface LoginResult {

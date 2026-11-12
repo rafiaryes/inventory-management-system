@@ -30,19 +30,28 @@ export const listCategoriesQuerySchema = t.Object({
   sortOrder: t.Optional(t.String()),
 });
 
-export const createCategoryBodySchema = t.Object({
-  name: t.String({ minLength: 1, maxLength: 100 }),
-  description: t.Optional(t.Nullable(t.String())),
-});
+export const createCategoryBodySchema = t.Object(
+  {
+    name: t.String({ minLength: 1, maxLength: 100 }),
+    description: t.Optional(t.Nullable(t.String())),
+  },
+  { additionalProperties: false },
+);
 
-export const updateCategoryBodySchema = t.Object({
-  name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
-  description: t.Optional(t.Nullable(t.String())),
-});
+export const updateCategoryBodySchema = t.Object(
+  {
+    name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+    description: t.Optional(t.Nullable(t.String())),
+  },
+  { additionalProperties: false },
+);
 
-export const updateCategoryStatusBodySchema = t.Object({
-  isActive: t.Boolean(),
-});
+export const updateCategoryStatusBodySchema = t.Object(
+  {
+    isActive: t.Boolean(),
+  },
+  { additionalProperties: false },
+);
 
 export const categoryListResponseSchema =
   createPaginatedSchema(categoryDtoSchema);

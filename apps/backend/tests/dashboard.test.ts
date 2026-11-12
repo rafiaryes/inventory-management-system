@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { createApp } from "../src/app";
 import type { BackendEnv } from "../src/config/env";
 import { db } from "../src/db";
@@ -12,19 +12,28 @@ import {
   type UserRole,
 } from "../src/db/schema";
 
+interface DashboardSummarySnapshot {
+  activeProductCount: number;
+  activeCategoryCount: number;
+  lowStockCount: number;
+  stockInCount: number;
+  stockOutCount: number;
+}
+
 function createTestEnv(): BackendEnv {
   return {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 100,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,
@@ -66,7 +75,17 @@ describe("dashboard API endpoint", () => {
   let staffCookie = "";
   let topLowStockId = "";
   let tieSmallerStockId = "";
+  let tieLargerStockId = "";
   let newestMovementId = "";
+  let baselineSummary: DashboardSummarySnapshot = {
+    activeProductCount: 0,
+    activeCategoryCount: 0,
+    lowStockCount: 0,
+    stockInCount: 0,
+    stockOutCount: 0,
+  };
+  let existingLowStockCount = 0;
+  let existingMovementCount = 0;
 
   async function seedUser(email: string, role: UserRole): Promise<string> {
     const passwordHash = await Bun.password.hash(password, {
@@ -106,6 +125,50 @@ describe("dashboard API endpoint", () => {
     adminCookie = await login(adminEmail);
     staffCookie = await login(staffEmail);
 
+    // Measure baseline metrics BEFORE inserting fixtures so assertions use exact deltas
+    // and never depend on an empty global database.
+    const baselineRes = await app.handle(
+      new Request("http://localhost/api/v1/dashboard", {
+        headers: { cookie: adminCookie },
+      }),
+    );
+    expect(baselineRes.status).toBe(200);
+    const baselineBody = (await baselineRes.json()) as {
+      data: { summary: DashboardSummarySnapshot };
+    };
+    baselineSummary = baselineBody.data.summary;
+    existingLowStockCount = baselineSummary.lowStockCount;
+
+    const [maxExistingDeficitRow] = await db
+      .select({
+        maxDeficit: sql<string>`coalesce(max(${products.minimumStock} - ${products.currentStock}), 0)`,
+      })
+      .from(products)
+      .where(
+        and(
+          eq(products.status, "active"),
+          lte(products.currentStock, products.minimumStock),
+        ),
+      );
+    const baselineMaxDeficit = Math.ceil(
+      Number(maxExistingDeficitRow?.maxDeficit ?? "0"),
+    );
+
+    const [latestExistingMovementRow] = await db
+      .select({ createdAt: stockMovements.createdAt })
+      .from(stockMovements)
+      .orderBy(desc(stockMovements.createdAt))
+      .limit(1);
+    const [movementCountRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(stockMovements);
+    existingMovementCount = movementCountRow?.count ?? 0;
+
+    // Choose deficits strictly higher than any pre-existing low-stock rows so fixture ordering is deterministic
+    const topMinimumStock = `${baselineMaxDeficit + 1002}.000`;
+    const tieOneMinimumStock = `${baselineMaxDeficit + 501}.000`;
+    const tieTwoMinimumStock = `${baselineMaxDeficit + 505}.000`;
+
     // 2 active categories, 1 inactive category
     const catRows = await db
       .insert(categories)
@@ -126,7 +189,7 @@ describe("dashboard API endpoint", () => {
     // - 2 normal stock (current > minimum)
     // Plus 1 inactive product (with low stock, must be excluded from activeProductCount & lowStockCount)
     const productRowsInput = [
-      // Highest deficit (25.000 - 2.000 = 23.000)
+      // Highest deficit strictly above baseline
       {
         categoryId: activeCatId,
         sku: `DSH-TOP-${upperRunId}`,
@@ -135,10 +198,10 @@ describe("dashboard API endpoint", () => {
         purchasePrice: "1000.00",
         sellingPrice: "2000.00",
         currentStock: "2.000",
-        minimumStock: "25.000",
+        minimumStock: topMinimumStock,
         status: "active" as const,
       },
-      // Equal deficit of 10.000: smaller currentStock (1 vs 5) should come first
+      // Equal deficit (`baselineMaxDeficit + 500`): smaller currentStock (1 vs 5) must come first
       {
         categoryId: activeCatId,
         sku: `DSH-TIE1-${upperRunId}`,
@@ -147,7 +210,7 @@ describe("dashboard API endpoint", () => {
         purchasePrice: "1000.00",
         sellingPrice: "2000.00",
         currentStock: "1.000",
-        minimumStock: "11.000",
+        minimumStock: tieOneMinimumStock,
         status: "active" as const,
       },
       {
@@ -158,7 +221,7 @@ describe("dashboard API endpoint", () => {
         purchasePrice: "1000.00",
         sellingPrice: "2000.00",
         currentStock: "5.000",
-        minimumStock: "15.000",
+        minimumStock: tieTwoMinimumStock,
         status: "active" as const,
       },
       // 8 more low-stock products (deficits 5..1, including equality currentStock === minimumStock)
@@ -222,16 +285,22 @@ describe("dashboard API endpoint", () => {
       createdProductIds.push(row.id);
       if (row.sku === `DSH-TOP-${upperRunId}`) topLowStockId = row.id;
       if (row.sku === `DSH-TIE1-${upperRunId}`) tieSmallerStockId = row.id;
+      if (row.sku === `DSH-TIE2-${upperRunId}`) tieLargerStockId = row.id;
       if (row.sku === `DSH-OK1-${upperRunId}`) healthyProductId = row.id;
       if (row.sku === `DSH-INACT-${upperRunId}`) inactiveProductId = row.id;
     }
+
+    const baseNewestMs = Math.max(
+      Date.parse("2026-10-31T17:00:00.000Z"),
+      (latestExistingMovementRow?.createdAt.getTime() ?? 0) + 60_000,
+    );
 
     // Seed 12 movements across timezone boundaries:
     // - 1 strictly before Oct 2026 WIB (`2026-09-30T16:59:59.999Z`) -> excluded from monthly count
     // - 1 at exact start bound (`2026-09-30T17:00:00.000Z`) -> included (IN)
     // - 8 inside Oct 2026 WIB on active product (5 IN, 3 OUT) -> included
     // - 1 inside Oct 2026 WIB on INACTIVE product (`2026-10-31T16:59:59.999Z`, OUT) -> included
-    // - 1 at exact end bound (`2026-10-31T17:00:00.000Z`, Nov 1 00:00 WIB) -> excluded from Oct monthly count, newest in recentStockMovements
+    // - 1 outside Oct 2026 WIB and strictly newer than any existing DB movements -> newest in recentStockMovements
     const movementValues = [
       {
         productId: healthyProductId,
@@ -297,7 +366,7 @@ describe("dashboard API endpoint", () => {
         reason: "Exact Nov 1 WIB (outside Oct count)",
         notes: "Top recent movement",
         createdBy: adminId,
-        createdAt: new Date("2026-10-31T17:00:00.000Z"),
+        createdAt: new Date(baseNewestMs),
       },
     ];
 
@@ -374,9 +443,22 @@ describe("dashboard API endpoint", () => {
 
     expect(adminPayload.data).toEqual(staffPayload.data);
 
-    // 13 active products (inactive excluded), 2 active categories, 11 low-stock active products,
-    // Monthly counts in Oct 2026 Asia/Jakarta: 1 + 5 = 6 IN, 3 + 1 (inactive product) = 4 OUT
-    expect(adminPayload.data.summary).toEqual({
+    // Verify exact deltas added by our isolated fixtures (+13 active products, +2 active categories,
+    // +11 low-stock active products, and in Oct 2026 Asia/Jakarta: +6 IN, +4 OUT including inactive product movement)
+    expect({
+      activeProductCount:
+        adminPayload.data.summary.activeProductCount -
+        baselineSummary.activeProductCount,
+      activeCategoryCount:
+        adminPayload.data.summary.activeCategoryCount -
+        baselineSummary.activeCategoryCount,
+      lowStockCount:
+        adminPayload.data.summary.lowStockCount - baselineSummary.lowStockCount,
+      stockInCount:
+        adminPayload.data.summary.stockInCount - baselineSummary.stockInCount,
+      stockOutCount:
+        adminPayload.data.summary.stockOutCount - baselineSummary.stockOutCount,
+    }).toEqual({
       activeProductCount: 13,
       activeCategoryCount: 2,
       lowStockCount: 11,
@@ -385,19 +467,26 @@ describe("dashboard API endpoint", () => {
     });
 
     // Low stock capped at 10, sorted by (minimumStock - currentStock) DESC, currentStock ASC, id ASC
-    expect(adminPayload.data.lowStockProducts).toHaveLength(10);
+    expect(adminPayload.data.lowStockProducts).toHaveLength(
+      Math.min(10, existingLowStockCount + 11),
+    );
     expect(adminPayload.data.lowStockProducts[0]?.id).toBe(topLowStockId);
     expect(adminPayload.data.lowStockProducts[1]?.id).toBe(tieSmallerStockId);
+    expect(adminPayload.data.lowStockProducts[2]?.id).toBe(tieLargerStockId);
 
-    // Recent movements capped at 10, ordered DESC, includes inactive product movement, no notes/prices
-    expect(adminPayload.data.recentStockMovements).toHaveLength(10);
+    // Recent movements capped at 10, ordered DESC, newestMovementId first, includes inactive product movement when within top 10
+    expect(adminPayload.data.recentStockMovements).toHaveLength(
+      Math.min(10, existingMovementCount + 12),
+    );
     expect(adminPayload.data.recentStockMovements[0]?.id).toBe(newestMovementId);
-    expect(
-      adminPayload.data.recentStockMovements.some(
-        (item) =>
-          (item.product as { sku?: string }).sku === `DSH-INACT-${upperRunId}`,
-      ),
-    ).toBe(true);
+    if (existingMovementCount === 0) {
+      expect(
+        adminPayload.data.recentStockMovements.some(
+          (item) =>
+            (item.product as { sku?: string }).sku === `DSH-INACT-${upperRunId}`,
+        ),
+      ).toBe(true);
+    }
 
     for (const prod of adminPayload.data.lowStockProducts) {
       expect("purchasePrice" in prod).toBe(false);

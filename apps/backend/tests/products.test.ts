@@ -17,14 +17,15 @@ function createTestEnv(): BackendEnv {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 100,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,
@@ -641,5 +642,72 @@ describe("products API endpoints", () => {
       }),
     );
     expect(unitWithStockRes.status).toBe(422);
+  });
+
+  test("rejects unknown properties on product payloads and invalid UUID/query params with 400 VALIDATION_ERROR", async () => {
+    const createExtraRes = await app.handle(
+      new Request("http://localhost/api/v1/products", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({
+          categoryId: activeCategoryId,
+          sku: `EXTRA-${upperRunId}`,
+          name: "Strict Product",
+          unit: "pcs",
+          purchasePrice: "10.00",
+          sellingPrice: "15.00",
+          extraField: "unexpected",
+        }),
+      }),
+    );
+    expect(createExtraRes.status).toBe(400);
+    const createExtraBody = (await createExtraRes.json()) as {
+      error: { code: string };
+    };
+    expect(createExtraBody.error.code).toBe("VALIDATION_ERROR");
+
+    const patchExtraRes = await app.handle(
+      new Request(`http://localhost/api/v1/products/${crypto.randomUUID()}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({
+          name: "Rename Strict",
+          extraField: "unexpected",
+        }),
+      }),
+    );
+    expect(patchExtraRes.status).toBe(400);
+
+    const statusExtraRes = await app.handle(
+      new Request(`http://localhost/api/v1/products/${crypto.randomUUID()}/status`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({
+          status: "inactive",
+          extraField: "unexpected",
+        }),
+      }),
+    );
+    expect(statusExtraRes.status).toBe(400);
+
+    const invalidUuidRes = await app.handle(
+      new Request("http://localhost/api/v1/products/not-a-uuid", {
+        headers: { cookie: adminCookie },
+      }),
+    );
+    expect(invalidUuidRes.status).toBe(400);
+    const invalidUuidBody = (await invalidUuidRes.json()) as {
+      error: { code: string };
+    };
+    expect(invalidUuidBody.error.code).toBe("VALIDATION_ERROR");
   });
 });

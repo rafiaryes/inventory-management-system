@@ -10,14 +10,15 @@ function createTestEnv(): BackendEnv {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 100,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,
@@ -291,5 +292,62 @@ describe("categories API endpoints", () => {
       data: Array<{ id: string }>;
     };
     expect(adminListBody.data.map((c) => c.id)).toEqual([categoryId]);
+  });
+
+  test("rejects unknown properties on category payloads with 400 VALIDATION_ERROR", async () => {
+    const createRes = await app.handle(
+      new Request("http://localhost/api/v1/categories", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({
+          name: `Strict Category ${runId}`,
+          extraField: "unexpected",
+        }),
+      }),
+    );
+    expect(createRes.status).toBe(400);
+    const createBody = (await createRes.json()) as { error: { code: string } };
+    expect(createBody.error.code).toBe("VALIDATION_ERROR");
+
+    const dummyCategoryId = "00000000-0000-4000-8000-000000000001";
+    const updateRes = await app.handle(
+      new Request(`http://localhost/api/v1/categories/${dummyCategoryId}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({
+          name: `Updated Category ${runId}`,
+          extraField: "unexpected",
+        }),
+      }),
+    );
+    expect(updateRes.status).toBe(400);
+    const updateBody = (await updateRes.json()) as { error: { code: string } };
+    expect(updateBody.error.code).toBe("VALIDATION_ERROR");
+
+    const statusRes = await app.handle(
+      new Request(
+        `http://localhost/api/v1/categories/${dummyCategoryId}/status`,
+        {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            cookie: adminCookie,
+          },
+          body: JSON.stringify({
+            isActive: false,
+            extraField: "unexpected",
+          }),
+        },
+      ),
+    );
+    expect(statusRes.status).toBe(400);
+    const statusBody = (await statusRes.json()) as { error: { code: string } };
+    expect(statusBody.error.code).toBe("VALIDATION_ERROR");
   });
 });

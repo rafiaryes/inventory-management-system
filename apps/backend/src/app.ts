@@ -113,7 +113,9 @@ export function createApp(deps: AppDependencies = {}) {
     .use(stockMovementsRoutes)
     .use(dashboardRoutes);
 
-  return new Elysia()
+  // Disable Elysia's pre-validation property stripping so schemas with `additionalProperties: false`
+  // reject unknown request body properties with 400 VALIDATION_ERROR instead of silently dropping them.
+  return new Elysia({ normalize: false })
     .use(requestIdPlugin)
     .use(errorHandlerPlugin)
     .use(createCorsPlugin(env.CORS_ALLOWED_ORIGINS))

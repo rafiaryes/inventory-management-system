@@ -16,8 +16,6 @@ import type {
   LoginResult,
 } from "./auth.types";
 
-const MILLISECONDS_PER_DAY = 86_400_000;
-
 let dummyPasswordHashPromise: Promise<string> | null = null;
 
 function getDummyPasswordHash(): Promise<string> {
@@ -72,14 +70,11 @@ export function createAuthService(deps: CreateAuthServiceDeps): AuthService {
 
       const rawSessionToken = generateSessionToken(32);
       const tokenHash = hashSessionToken(rawSessionToken);
-      const expiresAt = new Date(
-        Date.now() + env.SESSION_TTL_DAYS * MILLISECONDS_PER_DAY,
-      );
 
-      await repository.createSession({
+      const createdSession = await repository.createSession({
         userId: user.id,
         tokenHash,
-        expiresAt,
+        ttlDays: env.SESSION_TTL_DAYS,
       });
 
       return {
@@ -90,7 +85,7 @@ export function createAuthService(deps: CreateAuthServiceDeps): AuthService {
           role: user.role,
         },
         rawSessionToken,
-        expiresAt,
+        expiresAt: createdSession.expiresAt,
       };
     },
 

@@ -6,6 +6,33 @@ import * as schema from "./schema";
 
 const env = getEnv();
 
+const BLOCKED_TEST_DB_NAME = "database_url_test_not_configured";
+
+/**
+ * Ensures test-mode database initialization never targets the application database.
+ */
+export function assertSafeTestDatabaseUrl(databaseUrl: string): void {
+  let dbName = "";
+  try {
+    dbName = new URL(databaseUrl).pathname.replace(/^\//, "");
+  } catch {
+    throw new Error("Invalid DATABASE_URL in test mode");
+  }
+
+  if (
+    dbName === "inventory_management" ||
+    (!dbName.endsWith("_test") && dbName !== BLOCKED_TEST_DB_NAME)
+  ) {
+    throw new Error(
+      `Refusing to initialize PostgreSQL connection in test mode against non-test database "${dbName || "<empty>"}". Set DATABASE_URL_TEST to a dedicated *_test database.`,
+    );
+  }
+}
+
+if (env.NODE_ENV === "test") {
+  assertSafeTestDatabaseUrl(env.DATABASE_URL);
+}
+
 export const sqlClient = postgres(env.DATABASE_URL, {
   max: 10,
   idle_timeout: 20,

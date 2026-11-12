@@ -19,14 +19,15 @@ function createTestEnv(overrides: Partial<BackendEnv> = {}): BackendEnv {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 50,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,
@@ -419,15 +420,21 @@ describe("authentication, sessions, and RBAC guards", () => {
     });
     const app = createApp({
       env: createTestEnv({
+        TRUSTED_PROXY_IPS: ["127.0.0.1", "::1"],
         LOGIN_RATE_LIMIT_MAX: 3,
         LOGIN_RATE_LIMIT_WINDOW_SECONDS: 120,
       }),
       loginRateLimiter: rateLimiter,
     });
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const res = await app.handle(
-        new Request("http://localhost/api/v1/auth/login", {
+    app.listen({ hostname: "127.0.0.1", port: 0 });
+    try {
+      const port = app.server?.port;
+      expect(port).toBeDefined();
+      const loginUrl = `http://127.0.0.1:${port}/api/v1/auth/login`;
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const res = await fetch(loginUrl, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -437,13 +444,11 @@ describe("authentication, sessions, and RBAC guards", () => {
             email: adminEmail,
             password: "WrongPassword#123",
           }),
-        }),
-      );
-      expect(res.status).toBe(401);
-    }
+        });
+        expect(res.status).toBe(401);
+      }
 
-    const blockedRes = await app.handle(
-      new Request("http://localhost/api/v1/auth/login", {
+      const blockedRes = await fetch(loginUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -453,23 +458,21 @@ describe("authentication, sessions, and RBAC guards", () => {
           email: adminEmail,
           password: validPassword,
         }),
-      }),
-    );
-    expect(blockedRes.status).toBe(429);
-    const retryAfter = Number(blockedRes.headers.get("retry-after"));
-    expect(Number.isInteger(retryAfter)).toBe(true);
-    expect(retryAfter).toBeGreaterThanOrEqual(1);
-    expect(retryAfter).toBeLessThanOrEqual(120);
+      });
+      expect(blockedRes.status).toBe(429);
+      const retryAfter = Number(blockedRes.headers.get("retry-after"));
+      expect(Number.isInteger(retryAfter)).toBe(true);
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(120);
 
-    const blockedBody = (await blockedRes.json()) as {
-      success: boolean;
-      error: { code: string };
-    };
-    expect(blockedBody.success).toBe(false);
-    expect(blockedBody.error.code).toBe("RATE_LIMIT_EXCEEDED");
+      const blockedBody = (await blockedRes.json()) as {
+        success: boolean;
+        error: { code: string };
+      };
+      expect(blockedBody.success).toBe(false);
+      expect(blockedBody.error.code).toBe("RATE_LIMIT_EXCEEDED");
 
-    const otherIpRes = await app.handle(
-      new Request("http://localhost/api/v1/auth/login", {
+      const otherIpRes = await fetch(loginUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -479,9 +482,11 @@ describe("authentication, sessions, and RBAC guards", () => {
           email: adminEmail,
           password: validPassword,
         }),
-      }),
-    );
-    expect(otherIpRes.status).toBe(200);
+      });
+      expect(otherIpRes.status).toBe(200);
+    } finally {
+      await app.stop(true);
+    }
   });
 
   test("requireRole enforces admin-only access (401 unauthenticated, 403 staff, 200 admin)", async () => {
@@ -559,5 +564,209 @@ describe("authentication, sessions, and RBAC guards", () => {
       .from(sessions)
       .where(eq(sessions.userId, adminUserId));
     expect(remaining[0]!.count).toBeGreaterThanOrEqual(1);
+  });
+
+  test("ignores spoofed x-forwarded-for headers when TRUSTED_PROXY_IPS is empty", async () => {
+    const rateLimiter = createLoginRateLimiter({
+      maxAttempts: 3,
+      windowSeconds: 120,
+    });
+    const app = createApp({
+      env: createTestEnv({
+        TRUSTED_PROXY_IPS: [],
+        LOGIN_RATE_LIMIT_MAX: 3,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS: 120,
+      }),
+      loginRateLimiter: rateLimiter,
+    });
+
+    app.listen({ hostname: "127.0.0.1", port: 0 });
+    try {
+      const port = app.server?.port;
+      expect(port).toBeDefined();
+      const loginUrl = `http://127.0.0.1:${port}/api/v1/auth/login`;
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const res = await fetch(loginUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": `203.0.113.${attempt}`,
+          },
+          body: JSON.stringify({
+            email: adminEmail,
+            password: "WrongPassword#123",
+          }),
+        });
+        expect(res.status).toBe(401);
+      }
+
+      // Even with another email and another forged X-Forwarded-For, direct peer IP 127.0.0.1 is blocked
+      const blockedRes = await fetch(loginUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.250",
+        },
+        body: JSON.stringify({
+          email: staffEmail,
+          password: validPassword,
+        }),
+      });
+      expect(blockedRes.status).toBe(429);
+      const blockedBody = (await blockedRes.json()) as {
+        error: { code: string };
+      };
+      expect(blockedBody.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    } finally {
+      await app.stop(true);
+    }
+  });
+
+  test("handles multi-hop XFF with trusted CIDR, ignores untrusted proxy peers, and fails closed (503) in production without socket IP", async () => {
+    // 1. Multi-hop trusted proxies: right-to-left stops at client IP even with spoofed leftmost hop
+    const multiHopLimiter = createLoginRateLimiter({
+      maxAttempts: 2,
+      windowSeconds: 120,
+    });
+    const multiHopApp = createApp({
+      env: createTestEnv({
+        TRUSTED_PROXY_IPS: ["127.0.0.1", "10.0.0.0/8"],
+        LOGIN_RATE_LIMIT_MAX: 2,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS: 120,
+      }),
+      loginRateLimiter: multiHopLimiter,
+    });
+    multiHopApp.listen({ hostname: "127.0.0.1", port: 0 });
+    try {
+      const url = `http://127.0.0.1:${multiHopApp.server?.port}/api/v1/auth/login`;
+      for (const spoofedLeft of ["203.0.113.1", "203.0.113.2"]) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": `${spoofedLeft}, 198.51.100.77, 10.0.0.5`,
+          },
+          body: JSON.stringify({
+            email: adminEmail,
+            password: "WrongPassword#123",
+          }),
+        });
+        expect(res.status).toBe(401);
+      }
+
+      // Same real client hop (198.51.100.77) with another spoofed leftmost IP is blocked (429)
+      const blockedMultiHop = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.99, 198.51.100.77, 10.0.0.5",
+        },
+        body: JSON.stringify({
+          email: adminEmail,
+          password: validPassword,
+        }),
+      });
+      expect(blockedMultiHop.status).toBe(429);
+      expect(Number(blockedMultiHop.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    } finally {
+      await multiHopApp.stop(true);
+    }
+
+    // 2. Peer outside configured TRUSTED_PROXY_IPS (10.0.0.0/8 does not include loopback 127.0.0.1)
+    const untrustedPeerLimiter = createLoginRateLimiter({
+      maxAttempts: 2,
+      windowSeconds: 120,
+    });
+    const untrustedPeerApp = createApp({
+      env: createTestEnv({
+        TRUSTED_PROXY_IPS: ["10.0.0.0/8"],
+        LOGIN_RATE_LIMIT_MAX: 2,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS: 120,
+      }),
+      loginRateLimiter: untrustedPeerLimiter,
+    });
+    untrustedPeerApp.listen({ hostname: "127.0.0.1", port: 0 });
+    try {
+      const url = `http://127.0.0.1:${untrustedPeerApp.server?.port}/api/v1/auth/login`;
+      for (let i = 1; i <= 2; i++) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": `198.51.100.${i}`,
+          },
+          body: JSON.stringify({
+            email: adminEmail,
+            password: "WrongPassword#123",
+          }),
+        });
+        expect(res.status).toBe(401);
+      }
+      const blockedUntrusted = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "198.51.100.250",
+        },
+        body: JSON.stringify({
+          email: staffEmail,
+          password: validPassword,
+        }),
+      });
+      expect(blockedUntrusted.status).toBe(429);
+    } finally {
+      await untrustedPeerApp.stop(true);
+    }
+
+    // 3. Production fail-closed 503 when socket IP is unavailable (app.handle without TCP socket)
+    const origError = console.error;
+    console.error = () => {};
+    try {
+      const prodApp = createApp({
+        env: createTestEnv({
+          NODE_ENV: "production",
+          COOKIE_SECURE: true,
+        }),
+      });
+      const prodRes = await prodApp.handle(
+        new Request("http://localhost/api/v1/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: adminEmail,
+            password: validPassword,
+          }),
+        }),
+      );
+      expect(prodRes.status).toBe(503);
+      const prodBody = (await prodRes.json()) as { error: { code: string } };
+      expect(prodBody.error.code).toBe("SERVICE_UNAVAILABLE");
+    } finally {
+      console.error = origError;
+    }
+  });
+
+  test("rejects unknown properties on login payload with 400 VALIDATION_ERROR", async () => {
+    const app = createApp({ env: createTestEnv() });
+    const res = await app.handle(
+      new Request("http://localhost/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: adminEmail,
+          password: validPassword,
+          extraField: "unexpected",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      success: boolean;
+      error: { code: string };
+    };
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
   });
 });

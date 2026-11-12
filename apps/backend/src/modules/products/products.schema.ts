@@ -24,35 +24,53 @@ const productCategorySummarySchema = t.Object({
   name: t.String(),
 });
 
-export const productStaffDtoSchema = t.Object({
-  id: t.String({ format: "uuid" }),
-  category: productCategorySummarySchema,
-  sku: t.String(),
-  name: t.String(),
-  description: t.Nullable(t.String()),
-  unit: t.String(),
-  currentStock: t.String(),
-  minimumStock: t.String(),
-  status: t.Union([t.Literal("active"), t.Literal("inactive")]),
-  createdAt: t.String({ format: "date-time" }),
-  updatedAt: t.String({ format: "date-time" }),
-});
+export const productStaffDtoSchema = t.Object(
+  {
+    id: t.String({ format: "uuid" }),
+    category: productCategorySummarySchema,
+    sku: t.String(),
+    name: t.String(),
+    description: t.Nullable(t.String()),
+    unit: t.String(),
+    currentStock: t.String(),
+    minimumStock: t.String(),
+    status: t.Union([t.Literal("active"), t.Literal("inactive")]),
+    createdAt: t.String({ format: "date-time" }),
+    updatedAt: t.String({ format: "date-time" }),
+  },
+  {
+    title: "ProductStaffDto",
+    description:
+      "DTO produk untuk peran Staff. Field purchasePrice dan sellingPrice tidak pernah dikirim oleh backend.",
+  },
+);
 
-export const productAdminDtoSchema = t.Object({
-  id: t.String({ format: "uuid" }),
-  category: productCategorySummarySchema,
-  sku: t.String(),
-  name: t.String(),
-  description: t.Nullable(t.String()),
-  unit: t.String(),
-  purchasePrice: t.String(),
-  sellingPrice: t.String(),
-  currentStock: t.String(),
-  minimumStock: t.String(),
-  status: t.Union([t.Literal("active"), t.Literal("inactive")]),
-  createdAt: t.String({ format: "date-time" }),
-  updatedAt: t.String({ format: "date-time" }),
-});
+export const productAdminDtoSchema = t.Object(
+  {
+    id: t.String({ format: "uuid" }),
+    category: productCategorySummarySchema,
+    sku: t.String(),
+    name: t.String(),
+    description: t.Nullable(t.String()),
+    unit: t.String(),
+    purchasePrice: t.String({
+      description: "Harga beli produk dalam format NUMERIC(14,2) string (hanya untuk Admin)",
+    }),
+    sellingPrice: t.String({
+      description: "Harga jual produk dalam format NUMERIC(14,2) string (hanya untuk Admin)",
+    }),
+    currentStock: t.String(),
+    minimumStock: t.String(),
+    status: t.Union([t.Literal("active"), t.Literal("inactive")]),
+    createdAt: t.String({ format: "date-time" }),
+    updatedAt: t.String({ format: "date-time" }),
+  },
+  {
+    title: "ProductAdminDto",
+    description:
+      "DTO produk lengkap khusus untuk peran Admin, mencakup field purchasePrice dan sellingPrice.",
+  },
+);
 
 export const listProductsQuerySchema = t.Object({
   page: t.Optional(t.String()),

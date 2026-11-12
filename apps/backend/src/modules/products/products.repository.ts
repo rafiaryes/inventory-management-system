@@ -343,7 +343,7 @@ export function createProductsRepository(db: Database): ProductsRepository {
               purchasePrice: changes.purchasePrice ?? existing.purchasePrice,
               sellingPrice: changes.sellingPrice ?? existing.sellingPrice,
               minimumStock: nextMinimumStock,
-              updatedAt: new Date(),
+              updatedAt: sql`NOW()`,
             })
             .where(eq(products.id, id))
             .returning();
@@ -401,7 +401,7 @@ export function createProductsRepository(db: Database): ProductsRepository {
           .update(products)
           .set({
             status,
-            updatedAt: new Date(),
+            updatedAt: sql`NOW()`,
           })
           .where(eq(products.id, id))
           .returning();

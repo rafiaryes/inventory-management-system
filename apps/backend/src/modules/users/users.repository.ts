@@ -20,6 +20,21 @@ import { users, type UserRow } from "../../db/schema";
 import type { SessionUpdateExecutor } from "../auth/auth.repository";
 import type { ListUsersQuery, UpdateUserInput, UserSortField } from "./users.types";
 
+const ADMIN_MEMBERSHIP_ADVISORY_LOCK_NS = 20261112;
+const ADMIN_MEMBERSHIP_ADVISORY_LOCK_KEY = 1;
+
+/**
+ * Acquires a transaction-level advisory lock serializing all operations that can
+ * alter the set or count of active Admin accounts before any row locks are taken.
+ */
+async function acquireAdminMembershipLock(
+  executor: Pick<Database, "execute">,
+): Promise<void> {
+  await executor.execute(
+    sql`SELECT pg_advisory_xact_lock(${ADMIN_MEMBERSHIP_ADVISORY_LOCK_NS}, ${ADMIN_MEMBERSHIP_ADVISORY_LOCK_KEY})`,
+  );
+}
+
 const USER_SORT_COLUMNS = {
   createdAt: users.createdAt,
   updatedAt: users.updatedAt,
@@ -121,22 +136,35 @@ export function createUsersRepository(db: Database): UsersRepository {
 
     async create(input): Promise<UserRow> {
       try {
-        const rows = await db
-          .insert(users)
-          .values({
-            name: input.name,
-            email: input.email,
-            passwordHash: input.passwordHash,
-            role: input.role,
-            isActive: true,
-          })
-          .returning();
+        const insertUser = async (
+          executor: Pick<Database, "insert">,
+        ): Promise<UserRow> => {
+          const rows = await executor
+            .insert(users)
+            .values({
+              name: input.name,
+              email: input.email,
+              passwordHash: input.passwordHash,
+              role: input.role,
+              isActive: true,
+            })
+            .returning();
 
-        const created = rows[0];
-        if (!created) {
-          throw new Error("Failed to insert user record");
+          const created = rows[0];
+          if (!created) {
+            throw new Error("Failed to insert user record");
+          }
+          return created;
+        };
+
+        if (input.role === "admin") {
+          return await db.transaction(async (tx) => {
+            await acquireAdminMembershipLock(tx);
+            return insertUser(tx);
+          });
         }
-        return created;
+
+        return await insertUser(db);
       } catch (error) {
         if (isUniqueViolation(error, "users_email_normalized_uidx")) {
           throw new ConflictError("Email sudah digunakan", "DUPLICATE_EMAIL");
@@ -147,6 +175,11 @@ export function createUsersRepository(db: Database): UsersRepository {
 
     async updateUserInTx({ id, actorUserId, changes }): Promise<UserRow> {
       return db.transaction(async (tx) => {
+        if (changes.role !== undefined) {
+          // Acquire coarse Admin membership lock prior to any row lock to prevent AB-BA deadlocks.
+          await acquireAdminMembershipLock(tx);
+        }
+
         const targetRows = await tx
           .select()
           .from(users)
@@ -177,6 +210,7 @@ export function createUsersRepository(db: Database): UsersRepository {
               .where(
                 and(eq(users.role, "admin"), eq(users.isActive, true)),
               )
+              .orderBy(asc(users.id))
               .for("update");
 
             if (activeAdmins.length <= 1) {
@@ -195,7 +229,7 @@ export function createUsersRepository(db: Database): UsersRepository {
               name: changes.name ?? existing.name,
               email: changes.email ?? existing.email,
               role: changes.role ?? existing.role,
-              updatedAt: new Date(),
+              updatedAt: sql`NOW()`,
             })
             .where(eq(users.id, id))
             .returning();
@@ -221,6 +255,9 @@ export function createUsersRepository(db: Database): UsersRepository {
       revokeSessions,
     }): Promise<UserRow> {
       return db.transaction(async (tx) => {
+        // Acquire coarse Admin membership lock prior to any row lock to prevent AB-BA deadlocks.
+        await acquireAdminMembershipLock(tx);
+
         const targetRows = await tx
           .select()
           .from(users)
@@ -251,6 +288,7 @@ export function createUsersRepository(db: Database): UsersRepository {
               .where(
                 and(eq(users.role, "admin"), eq(users.isActive, true)),
               )
+              .orderBy(asc(users.id))
               .for("update");
 
             if (activeAdmins.length <= 1) {
@@ -266,7 +304,7 @@ export function createUsersRepository(db: Database): UsersRepository {
           .update(users)
           .set({
             isActive,
-            updatedAt: new Date(),
+            updatedAt: sql`NOW()`,
           })
           .where(eq(users.id, id))
           .returning();
@@ -304,7 +342,7 @@ export function createUsersRepository(db: Database): UsersRepository {
           .update(users)
           .set({
             passwordHash,
-            updatedAt: new Date(),
+            updatedAt: sql`NOW()`,
           })
           .where(eq(users.id, id));
 

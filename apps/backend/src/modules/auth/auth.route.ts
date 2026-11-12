@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { ServiceUnavailableError } from "../../common/errors";
 import { errorEnvelopeSchema, successResponse } from "../../common/http";
 import { extractClientIp } from "../../common/security";
 import type { BackendEnv } from "../../config/env";
@@ -21,10 +22,12 @@ export interface CreateAuthRoutesDeps {
   authPlugin: AuthPluginGuards;
   env: Pick<
     BackendEnv,
+    | "NODE_ENV"
     | "SESSION_COOKIE_NAME"
     | "SESSION_TTL_DAYS"
     | "COOKIE_SECURE"
     | "COOKIE_SAME_SITE"
+    | "TRUSTED_PROXY_IPS"
   >;
 }
 
@@ -95,10 +98,26 @@ export function createAuthRoutes(deps: CreateAuthRoutesDeps) {
     .post(
       "/login",
       async ({ body, cookie, request, server }) => {
-        const clientIp = extractClientIp(
-          request,
-          server?.requestIP(request)?.address ?? null,
-        );
+        const clientIp = extractClientIp(request, {
+          socketIp: server?.requestIP(request)?.address ?? null,
+          trustedProxyIps: env.TRUSTED_PROXY_IPS,
+        });
+
+        if (clientIp === null) {
+          if (env.NODE_ENV === "production") {
+            console.error(
+              "[auth-rate-limit] Client socket IP unavailable in production; verify server binding or TRUSTED_PROXY_IPS configuration",
+            );
+            throw new ServiceUnavailableError(
+              "Layanan autentikasi tidak dapat memverifikasi alamat klien",
+            );
+          }
+          if (server !== null) {
+            console.warn(
+              "[auth-rate-limit] Client socket IP unavailable on live server; applying per-account fallback rate limit",
+            );
+          }
+        }
 
         const result = await authService.login({
           email: body.email,
@@ -134,6 +153,7 @@ export function createAuthRoutes(deps: CreateAuthRoutesDeps) {
           401: errorEnvelopeSchema,
           403: errorEnvelopeSchema,
           429: errorEnvelopeSchema,
+          503: errorEnvelopeSchema,
         },
         detail: {
           tags: ["Auth"],

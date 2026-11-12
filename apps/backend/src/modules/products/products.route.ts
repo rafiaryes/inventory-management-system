@@ -57,6 +57,8 @@ export function createProductsRoutes(deps: CreateProductsRoutesDeps) {
         detail: {
           tags: ["Products"],
           summary: "Mengambil daftar produk (Admin lengkap, Staff tanpa harga & aktif saja)",
+          description:
+            "Perbedaan respons berdasarkan role: Admin menerima ProductAdminDto (termasuk field harga purchasePrice dan sellingPrice) serta dapat memfilter status active/inactive/all dan menyortir berdasarkan purchasePrice, sellingPrice, atau status. Staff hanya dapat melihat produk active (status=inactive/all atau sortBy purchasePrice/sellingPrice/status ditolak dengan 403 FORBIDDEN) dan menerima ProductStaffDto tanpa field purchasePrice maupun sellingPrice.",
           security: [{ cookieAuth: [] }],
         },
       },
@@ -82,6 +84,8 @@ export function createProductsRoutes(deps: CreateProductsRoutesDeps) {
         detail: {
           tags: ["Products"],
           summary: "Mengambil detail produk berdasarkan ID sesuai role",
+          description:
+            "Perbedaan respons berdasarkan role: Admin dapat melihat detail produk active maupun inactive dalam format ProductAdminDto (dengan field purchasePrice dan sellingPrice). Staff hanya dapat mengakses produk active (produk inactive ditolak dengan 403 FORBIDDEN) dan menerima ProductStaffDto tanpa field purchasePrice maupun sellingPrice.",
           security: [{ cookieAuth: [] }],
         },
       },

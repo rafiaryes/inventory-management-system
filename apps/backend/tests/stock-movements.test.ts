@@ -17,14 +17,15 @@ function createTestEnv(): BackendEnv {
     NODE_ENV: "test",
     PORT: 3001,
     DATABASE_URL:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@localhost:5432/inventory_management",
+      process.env.DATABASE_URL_TEST ??
+      "postgresql://blocked:blocked@127.0.0.1:1/database_url_test_not_configured",
     BUSINESS_TIMEZONE: "Asia/Jakarta",
     CORS_ALLOWED_ORIGINS: ["http://localhost:3000"],
     SESSION_COOKIE_NAME: "ims_session",
     SESSION_TTL_DAYS: 7,
     COOKIE_SECURE: false,
     COOKIE_SAME_SITE: "lax",
+    TRUSTED_PROXY_IPS: [],
     LOGIN_RATE_LIMIT_MAX: 100,
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: 900,
     ENABLE_SWAGGER: false,
@@ -630,5 +631,40 @@ describe("stock movements API endpoints", () => {
       );
       expect(immutableRes.status).toBe(404);
     }
+  });
+
+  test("rejects unknown properties on stock-in/out payloads and invalid UUID/query params with 400 VALIDATION_ERROR", async () => {
+    for (const movementType of ["in", "out"] as const) {
+      const extraRes = await app.handle(
+        new Request("http://localhost/api/v1/stock-movements", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie: staffCookie,
+          },
+          body: JSON.stringify({
+            productId: pcsProductId,
+            type: movementType,
+            quantity: "1",
+            reason: "Strict payload check",
+            extraField: "unexpected",
+          }),
+        }),
+      );
+      expect(extraRes.status).toBe(400);
+      const extraBody = (await extraRes.json()) as { error: { code: string } };
+      expect(extraBody.error.code).toBe("VALIDATION_ERROR");
+    }
+
+    const invalidUuidRes = await app.handle(
+      new Request("http://localhost/api/v1/stock-movements/not-a-uuid", {
+        headers: { cookie: staffCookie },
+      }),
+    );
+    expect(invalidUuidRes.status).toBe(400);
+    const invalidUuidBody = (await invalidUuidRes.json()) as {
+      error: { code: string };
+    };
+    expect(invalidUuidBody.error.code).toBe("VALIDATION_ERROR");
   });
 });

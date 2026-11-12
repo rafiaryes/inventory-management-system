@@ -143,11 +143,6 @@ export function createUsersService(deps: CreateUsersServiceDeps): UsersService {
     async resetUserPassword(id: string, newPassword: string): Promise<void> {
       assertPasswordNotBlank(newPassword, "newPassword");
 
-      const existing = await repository.findById(id);
-      if (!existing) {
-        throw new NotFoundError("Pengguna tidak ditemukan");
-      }
-
       const passwordHash = await Bun.password.hash(newPassword, {
         algorithm: "argon2id",
       });
