@@ -9,6 +9,7 @@ export const PRICE_MAX_INTEGER_DIGITS = 12;
 
 export const STOCK_SCALE = 3 as const;
 export const STOCK_MAX_INTEGER_DIGITS = 11;
+export const MAX_STOCK_SCALED = 99_999_999_999_999n;
 
 export interface ParsedDecimal {
   scaled: bigint;
@@ -181,4 +182,31 @@ export function validateStoredMinimumStockForUnit(
     "minimumStock",
   );
   assertUnitPrecision(parsed, normalizedUnit, "minimumStock");
+}
+
+/**
+ * Validates and parses a positive stock movement quantity (`> 0`) against unit precision rules.
+ */
+export function parsePositiveStockQuantity(
+  raw: string,
+  normalizedUnit: string,
+  fieldName = "quantity",
+): ParsedDecimal {
+  const parsed = parseDecimalString(
+    raw,
+    STOCK_SCALE,
+    STOCK_MAX_INTEGER_DIGITS,
+    fieldName,
+  );
+
+  if (parsed.isNegative || parsed.isZero) {
+    throw new BusinessRuleError(
+      "Quantity harus lebih besar dari nol",
+      "BUSINESS_RULE_VIOLATION",
+      [{ field: fieldName, message: `${fieldName} harus lebih besar dari 0` }],
+    );
+  }
+
+  assertUnitPrecision(parsed, normalizedUnit, fieldName);
+  return parsed;
 }

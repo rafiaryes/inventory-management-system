@@ -11,9 +11,15 @@ import { createAuthService } from "./modules/auth/auth.service";
 import { createCategoriesRepository } from "./modules/categories/categories.repository";
 import { createCategoriesRoutes } from "./modules/categories/categories.route";
 import { createCategoriesService } from "./modules/categories/categories.service";
+import { createDashboardRepository } from "./modules/dashboard/dashboard.repository";
+import { createDashboardRoutes } from "./modules/dashboard/dashboard.route";
+import { createDashboardService } from "./modules/dashboard/dashboard.service";
 import { createProductsRepository } from "./modules/products/products.repository";
 import { createProductsRoutes } from "./modules/products/products.route";
 import { createProductsService } from "./modules/products/products.service";
+import { createStockMovementsRepository } from "./modules/stock-movements/stock-movements.repository";
+import { createStockMovementsRoutes } from "./modules/stock-movements/stock-movements.route";
+import { createStockMovementsService } from "./modules/stock-movements/stock-movements.service";
 import { createUsersRepository } from "./modules/users/users.repository";
 import { createUsersRoutes } from "./modules/users/users.route";
 import { createUsersService } from "./modules/users/users.service";
@@ -29,6 +35,7 @@ export interface AppDependencies {
   db?: Database;
   checkDbHealth?: () => Promise<boolean>;
   loginRateLimiter?: LoginRateLimiter;
+  now?: () => Date;
 }
 
 /**
@@ -75,6 +82,26 @@ export function createApp(deps: AppDependencies = {}) {
     authPlugin,
   });
 
+  const stockMovementsRepository = createStockMovementsRepository(database);
+  const stockMovementsService = createStockMovementsService(
+    stockMovementsRepository,
+  );
+  const stockMovementsRoutes = createStockMovementsRoutes({
+    stockMovementsService,
+    authPlugin,
+  });
+
+  const dashboardRepository = createDashboardRepository(database);
+  const dashboardService = createDashboardService({
+    repository: dashboardRepository,
+    businessTimezone: env.BUSINESS_TIMEZONE,
+    now: deps.now,
+  });
+  const dashboardRoutes = createDashboardRoutes({
+    dashboardService,
+    authPlugin,
+  });
+
   const v1Routes = new Elysia({
     name: "api-v1",
     prefix: "/api/v1",
@@ -82,7 +109,9 @@ export function createApp(deps: AppDependencies = {}) {
     .use(authRoutes)
     .use(usersRoutes)
     .use(categoriesRoutes)
-    .use(productsRoutes);
+    .use(productsRoutes)
+    .use(stockMovementsRoutes)
+    .use(dashboardRoutes);
 
   return new Elysia()
     .use(requestIdPlugin)

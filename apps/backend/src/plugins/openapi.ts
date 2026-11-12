@@ -38,6 +38,14 @@ export function createOpenApiPlugin(env: Pick<BackendEnv, "ENABLE_SWAGGER" | "SE
           name: "Products",
           description: "Manajemen katalog produk dan batas minimum stok",
         },
+        {
+          name: "Stock Movements",
+          description: "Transaksi Stock In / Stock Out dan riwayat pergerakan stok",
+        },
+        {
+          name: "Dashboard",
+          description: "Ringkasan inventaris dan metrik pergerakan stok bulan berjalan",
+        },
       ],
       components: {
         securitySchemes: {
