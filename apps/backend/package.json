@@ -14,6 +14,8 @@
     "db:seed": "bun run src/db/seed.ts"
   },
   "dependencies": {
+    "@elysiajs/cors": "^1.4.3",
+    "@elysiajs/openapi": "^1.4.17",
     "drizzle-orm": "^0.45.4",
     "elysia": "1.4.30",
     "postgres": "^4.1.1"
