@@ -74,6 +74,17 @@ export const productsService = {
     });
   },
 
+  async getProductById(id: string, signal?: AbortSignal): Promise<ProductDto> {
+    const response = await apiRequest<ApiSuccessResponse<ProductDto>>(
+      `/products/${id}`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
+    return response.data;
+  },
+
   async createProduct(
     payload: CreateProductPayload,
   ): Promise<ProductAdminDto> {

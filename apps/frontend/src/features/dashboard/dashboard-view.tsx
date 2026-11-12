@@ -296,8 +296,8 @@ export function DashboardView() {
                           {formatStockQuantity(mov.quantity, mov.product.unit)}
                         </div>
                         <div className="text-xs font-normal text-slate-500">
-                          {formatStockQuantity(mov.stockBefore)} →{" "}
-                          {formatStockQuantity(mov.stockAfter)}
+                          {formatStockQuantity(mov.stockBefore, mov.product.unit)} →{" "}
+                          {formatStockQuantity(mov.stockAfter, mov.product.unit)}
                         </div>
                       </td>
                       <td className="px-4 py-3">

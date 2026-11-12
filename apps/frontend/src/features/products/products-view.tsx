@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { FeedbackBanner } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { ModalDialog } from "@/components/ui/modal";
 import { PaginationControls } from "@/components/ui/pagination";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ProductDetailModalContent } from "@/features/products/product-detail-modal-content";
 import { useAuth } from "@/hooks/use-auth";
 import { extractErrorMessage } from "@/lib/errors";
 import {
@@ -16,6 +18,10 @@ import {
   isDecimalLessThanOrEqual,
   validateDecimalInput,
 } from "@/lib/format";
+import {
+  toCategoryOption,
+  type ReferenceSelectOption,
+} from "@/lib/reference-helpers";
 import { categoriesService } from "@/services/categories.service";
 import {
   productsService,
@@ -44,7 +50,10 @@ export function ProductsView() {
 
   const [items, setItems] = useState<ProductDto[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>(DEFAULT_META);
-  const [activeCategories, setActiveCategories] = useState<CategoryDto[]>([]);
+  const [selectedFilterCategory, setSelectedFilterCategory] =
+    useState<ReferenceSelectOption<Pick<CategoryDto, "id" | "name" | "isActive">> | null>(
+      null,
+    );
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -61,12 +70,23 @@ export function ProductsView() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
 
+  // Detail Modal (Admin & Staff)
+  const [detailTargetId, setDetailTargetId] = useState<string | null>(null);
+  const [detailProduct, setDetailProduct] = useState<ProductDto | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRetryKey, setDetailRetryKey] = useState(0);
+
   // Modal state (Admin only)
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductAdminDto | null>(
     null,
   );
   const [formCategoryId, setFormCategoryId] = useState("");
+  const [selectedFormCategory, setSelectedFormCategory] =
+    useState<ReferenceSelectOption<Pick<CategoryDto, "id" | "name" | "isActive">> | null>(
+      null,
+    );
   const [formSku, setFormSku] = useState("");
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
@@ -79,30 +99,71 @@ export function ProductsView() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  const fetchActiveCategoryPage = useCallback(
+    async (params: {
+      page: number;
+      pageSize: number;
+      search: string;
+      signal: AbortSignal;
+    }) => {
+      const res = await categoriesService.listCategories({
+        page: params.page,
+        pageSize: params.pageSize,
+        search: params.search || undefined,
+        isActive: true,
+        sortBy: "name",
+        sortOrder: "asc",
+        signal: params.signal,
+      });
+      return {
+        options: res.data.map(toCategoryOption),
+        meta: res.meta,
+      };
+    },
+    [],
+  );
+
   useEffect(() => {
+    if (!detailTargetId) {
+      return;
+    }
+
     const controller = new AbortController();
-    async function loadCategories() {
+
+    async function loadProductDetail() {
       try {
-        const res = await categoriesService.listCategories({
-          page: 1,
-          pageSize: 100,
-          isActive: true,
-          sortBy: "name",
-          sortOrder: "asc",
-          signal: controller.signal,
-        });
-        if (!controller.signal.aborted) {
-          setActiveCategories(res.data);
+        const fetched = await productsService.getProductById(
+          detailTargetId!,
+          controller.signal,
+        );
+        if (controller.signal.aborted) {
+          return;
         }
-      } catch {
-        // Non-blocking; main products error handling remains clear
+        setDetailProduct(fetched);
+      } catch (err) {
+        if (
+          controller.signal.aborted ||
+          (err instanceof DOMException && err.name === "AbortError")
+        ) {
+          return;
+        }
+        setDetailProduct(null);
+        setDetailError(
+          extractErrorMessage(err, "Gagal memuat detail produk."),
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setDetailLoading(false);
+        }
       }
     }
-    void loadCategories();
+
+    void loadProductDetail();
+
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [detailRetryKey, detailTargetId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -165,9 +226,25 @@ export function ProductsView() {
     setSearchQuery(searchInput.trim());
   }
 
+  function openDetailModal(product: ProductDto) {
+    setDetailProduct(product);
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetailTargetId(product.id);
+    setDetailRetryKey((k) => k + 1);
+  }
+
+  function closeDetailModal() {
+    setDetailTargetId(null);
+    setDetailProduct(null);
+    setDetailError(null);
+    setDetailLoading(false);
+  }
+
   function openCreateModal() {
     setEditingProduct(null);
-    setFormCategoryId(activeCategories[0]?.id ?? "");
+    setFormCategoryId("");
+    setSelectedFormCategory(null);
     setFormSku("");
     setFormName("");
     setFormDescription("");
@@ -182,6 +259,13 @@ export function ProductsView() {
   function openEditModal(product: ProductAdminDto) {
     setEditingProduct(product);
     setFormCategoryId(product.category.id);
+    setSelectedFormCategory(
+      toCategoryOption({
+        id: product.category.id,
+        name: product.category.name,
+        isActive: true,
+      }),
+    );
     setFormSku(product.sku);
     setFormName(product.name);
     setFormDescription(product.description ?? "");
@@ -192,6 +276,19 @@ export function ProductsView() {
     setFormError(null);
     setModalOpen(true);
   }
+
+  const editingCategoryFallbackOptions = useMemo(() => {
+    if (!editingProduct) {
+      return [];
+    }
+    return [
+      toCategoryOption({
+        id: editingProduct.category.id,
+        name: editingProduct.category.name,
+        isActive: true,
+      }),
+    ];
+  }, [editingProduct]);
 
   async function handleSaveProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -381,30 +478,31 @@ export function ProductsView() {
             />
           </div>
 
-          <div>
+          <div className="min-w-[210px]">
             <label
               htmlFor="prod-category"
               className="block text-xs font-medium text-slate-600"
             >
               Kategori
             </label>
-            <select
+            <SearchableSelect
               id="prod-category"
               value={categoryFilter}
-              onChange={(e) => {
+              onChange={(nextId, nextOption) => {
                 setIsLoading(true);
                 setPage(1);
-                setCategoryFilter(e.target.value);
+                setCategoryFilter(nextId);
+                setSelectedFilterCategory(nextOption);
               }}
-              className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-            >
-              <option value="">Semua Kategori Aktif</option>
-              {activeCategories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
+              fetchPage={fetchActiveCategoryPage}
+              selectedOption={selectedFilterCategory}
+              allowClear
+              clearLabel="Semua Kategori Aktif"
+              placeholder="Semua Kategori Aktif"
+              searchPlaceholder="Cari kategori..."
+              emptyMessage="Tidak ada kategori aktif yang cocok."
+              refreshKey={reloadKey}
+            />
           </div>
 
           {isAdmin ? (
@@ -617,6 +715,13 @@ export function ProductsView() {
 
                       <td className="whitespace-nowrap px-4 py-3 text-right">
                         <div className="inline-flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openDetailModal(product)}
+                            className="text-xs font-medium text-slate-700 underline hover:text-slate-900"
+                          >
+                            Detail
+                          </button>
                           {product.status === "active" ? (
                             <Link
                               href={`/stock-movements?productId=${product.id}`}
@@ -716,30 +821,22 @@ export function ProductsView() {
                 >
                   Kategori
                 </label>
-                <select
+                <SearchableSelect
                   id="prod-form-cat"
-                  required
                   value={formCategoryId}
-                  onChange={(e) => setFormCategoryId(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-                >
-                  <option value="" disabled>
-                    Pilih kategori aktif
-                  </option>
-                  {editingProduct &&
-                  !activeCategories.some(
-                    (c) => c.id === editingProduct.category.id,
-                  ) ? (
-                    <option value={editingProduct.category.id}>
-                      {editingProduct.category.name} (Saat ini / Nonaktif)
-                    </option>
-                  ) : null}
-                  {activeCategories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(nextId, nextOption) => {
+                    setFormCategoryId(nextId);
+                    setSelectedFormCategory(nextOption);
+                  }}
+                  fetchPage={fetchActiveCategoryPage}
+                  selectedOption={selectedFormCategory}
+                  extraOptions={editingCategoryFallbackOptions}
+                  placeholder="Pilih kategori aktif"
+                  searchPlaceholder="Cari kategori aktif..."
+                  emptyMessage="Kategori aktif tidak ditemukan."
+                  refreshKey={reloadKey}
+                  required
+                />
               </div>
             </div>
 
@@ -883,6 +980,30 @@ export function ProductsView() {
           </form>
         </ModalDialog>
       ) : null}
+
+      {/* Product Detail Modal (Admin & Staff) */}
+      <ModalDialog
+        open={detailTargetId !== null}
+        title="Detail Produk"
+        description={
+          detailProduct
+            ? `${detailProduct.sku} · ${detailProduct.category.name}`
+            : undefined
+        }
+        onClose={closeDetailModal}
+      >
+        <ProductDetailModalContent
+          isAdmin={isAdmin}
+          loading={detailLoading}
+          error={detailError}
+          product={detailProduct}
+          onRetry={() => {
+            setDetailLoading(true);
+            setDetailError(null);
+            setDetailRetryKey((k) => k + 1);
+          }}
+        />
+      </ModalDialog>
     </div>
   );
 }

@@ -1,12 +1,14 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { FeedbackBanner } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { ModalDialog } from "@/components/ui/modal";
 import { PaginationControls } from "@/components/ui/pagination";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { StockMovementTableRow } from "@/features/stock-movements/stock-movement-row";
 import { useAuth } from "@/hooks/use-auth";
 import { ApiClientError } from "@/lib/api-client";
 import { extractErrorMessage } from "@/lib/errors";
@@ -15,14 +17,22 @@ import {
   formatStockQuantity,
   isCountOnlyUnit,
   toJakartaDateRangeIso,
-  validateDecimalInput,
 } from "@/lib/format";
+import {
+  extractObservedInactiveProducts,
+  isProductActiveStatus,
+  parseStockMovementDeepLink,
+  toProductOption,
+  toUserOption,
+  validateStockMovementSubmission,
+  type ReferenceSelectOption,
+  type StockProductRef,
+} from "@/lib/reference-helpers";
 import { productsService } from "@/services/products.service";
 import { stockMovementsService } from "@/services/stock-movements.service";
 import { usersService } from "@/services/users.service";
 import type { PaginationMeta } from "@/types/api";
 import type {
-  ProductDto,
   SortOrder,
   StockMovementDto,
   StockMovementType,
@@ -41,22 +51,48 @@ export function StockMovementsView() {
   const isAdmin = user?.role === "admin";
   const searchParams = useSearchParams();
 
-  const initialProductId = searchParams.get("productId") ?? "";
-  const initialTypeParam = searchParams.get("type");
-  const initialType: StockMovementType =
-    initialTypeParam === "out" ? "out" : "in";
+  const productIdParam = searchParams.get("productId");
+  const typeParam = searchParams.get("type");
+  const viewParam = searchParams.get("view");
+
+  const deepLink = useMemo(
+    () =>
+      parseStockMovementDeepLink({
+        productId: productIdParam,
+        type: typeParam,
+        view: viewParam,
+      }),
+    [productIdParam, typeParam, viewParam],
+  );
 
   const [items, setItems] = useState<StockMovementDto[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>(DEFAULT_META);
-  const [activeProducts, setActiveProducts] = useState<ProductDto[]>([]);
-  const [allFilterProducts, setAllFilterProducts] = useState<ProductDto[]>([]);
-  const [userOptions, setUserOptions] = useState<UserDto[]>([]);
+  const [observedInactiveById, setObservedInactiveById] = useState<
+    Record<string, StockProductRef>
+  >({});
+  const [selectedFilterProduct, setSelectedFilterProduct] =
+    useState<ReferenceSelectOption<StockProductRef> | null>(null);
+  const [selectedCreatorOption, setSelectedCreatorOption] =
+    useState<ReferenceSelectOption<
+      Pick<UserDto, "id" | "name" | "email" | "role" | "isActive">
+    > | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [deepLinkError, setDeepLinkError] = useState<string | null>(
+    () => deepLink.invalidProductIdError,
+  );
+  const [deepLinkCanRetry, setDeepLinkCanRetry] = useState(false);
+  const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
+  const [deepLinkRetryKey, setDeepLinkRetryKey] = useState(0);
+  const [staffRestrictedProductId, setStaffRestrictedProductId] = useState<
+    string | null
+  >(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Filters
-  const [productIdFilter, setProductIdFilter] = useState("");
+  // Filters (preserves initial deep-linked productId without removing URL query params)
+  const [productIdFilter, setProductIdFilter] = useState(
+    () => deepLink.initialProductId,
+  );
   const [typeFilter, setTypeFilter] = useState<"" | StockMovementType>("");
   const [createdByFilter, setCreatedByFilter] = useState("");
   const [startDateInput, setStartDateInput] = useState("");
@@ -68,10 +104,14 @@ export function StockMovementsView() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
 
-  // Transaction Modal
-  const [createOpen, setCreateOpen] = useState(() => Boolean(initialProductId));
-  const [formProductId, setFormProductId] = useState(initialProductId);
-  const [formType, setFormType] = useState<StockMovementType>(initialType);
+  // Transaction Modal (active products only)
+  const [createOpen, setCreateOpen] = useState(false);
+  const [formProductId, setFormProductId] = useState("");
+  const [selectedFormProduct, setSelectedFormProduct] =
+    useState<StockProductRef | null>(null);
+  const [formType, setFormType] = useState<StockMovementType>(
+    () => deepLink.initialType,
+  );
   const [formQuantity, setFormQuantity] = useState("");
   const [formReason, setFormReason] = useState("");
   const [formNotes, setFormNotes] = useState("");
@@ -84,63 +124,132 @@ export function StockMovementsView() {
   );
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Sync deep-link filter when URL query changes and resolve target product via GET /products/:id
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadReferences() {
+    async function resolveDeepLinkedProduct() {
+      await Promise.resolve();
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setFormType(deepLink.initialType);
+      setStaffRestrictedProductId(null);
+
+      if (deepLink.invalidProductIdError) {
+        setProductIdFilter("");
+        setSelectedFilterProduct(null);
+        setDeepLinkNotice(null);
+        setDeepLinkCanRetry(false);
+        setDeepLinkError(deepLink.invalidProductIdError);
+        return;
+      }
+
+      if (!deepLink.initialProductId) {
+        setDeepLinkError(null);
+        setDeepLinkCanRetry(false);
+        setDeepLinkNotice(null);
+        return;
+      }
+
+      setProductIdFilter(deepLink.initialProductId);
+      setPage(1);
+      setDeepLinkError(null);
+      setDeepLinkCanRetry(false);
+      setDeepLinkNotice(null);
+
       try {
-        const productsPromise = productsService.listProducts({
-          page: 1,
-          pageSize: 100,
-          status: isAdmin ? "all" : "active",
-          sortBy: "name",
-          sortOrder: "asc",
-          signal: controller.signal,
-        });
-
-        const usersPromise = isAdmin
-          ? usersService.listUsers({
-              page: 1,
-              pageSize: 100,
-              sortBy: "name",
-              sortOrder: "asc",
-              signal: controller.signal,
-            })
-          : Promise.resolve(null);
-
-        const [productsRes, usersRes] = await Promise.all([
-          productsPromise,
-          usersPromise,
-        ]);
-
+        const resolved = await productsService.getProductById(
+          deepLink.initialProductId,
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }
 
-        const loadedProducts = productsRes.data;
-        const onlyActive = loadedProducts.filter((p) => p.status === "active");
-        setAllFilterProducts(loadedProducts);
-        setActiveProducts(onlyActive);
-        setFormProductId((prev) =>
-          prev && onlyActive.some((p) => p.id === prev)
-            ? prev
-            : (onlyActive[0]?.id ?? ""),
+        const ref: StockProductRef = {
+          id: resolved.id,
+          sku: resolved.sku,
+          name: resolved.name,
+          unit: resolved.unit,
+          status: resolved.status,
+          currentStock: resolved.currentStock,
+        };
+        setSelectedFilterProduct(
+          toProductOption(
+            ref,
+            `Stok: ${formatStockQuantity(resolved.currentStock, resolved.unit)}`,
+          ),
         );
 
-        if (usersRes) {
-          setUserOptions(usersRes.data);
+        if (isProductActiveStatus(resolved.status)) {
+          setFormProductId(resolved.id);
+          setSelectedFormProduct(ref);
+          if (deepLink.shouldAutoOpenCreate) {
+            setCreateOpen(true);
+          }
+        } else {
+          setDeepLinkNotice(
+            `Produk "${resolved.name}" (${resolved.sku}) berstatus nonaktif. Riwayat tetap ditampilkan, namun transaksi Stock In / Stock Out tidak dapat dilakukan.`,
+          );
         }
-      } catch {
-        // Non-blocking reference options
+      } catch (err) {
+        if (
+          controller.signal.aborted ||
+          (err instanceof DOMException && err.name === "AbortError")
+        ) {
+          return;
+        }
+
+        if (err instanceof ApiClientError && err.status === 404) {
+          setDeepLinkError("Produk dari tautan URL tidak ditemukan.");
+          setDeepLinkCanRetry(false);
+          return;
+        }
+
+        if (err instanceof ApiClientError && err.status === 403) {
+          setStaffRestrictedProductId(deepLink.initialProductId);
+          setSelectedFilterProduct(
+            toProductOption(
+              {
+                id: deepLink.initialProductId,
+                sku: deepLink.initialProductId.slice(0, 8),
+                name: "Produk Nonaktif",
+                unit: "-",
+                status: "inactive",
+              },
+              "Detail katalog dibatasi untuk Staff",
+            ),
+          );
+          setDeepLinkNotice(
+            "Produk berstatus nonaktif. Riwayat pergerakan stok yang tersedia tetap ditampilkan, namun transaksi Stock In / Stock Out tidak dapat dilakukan.",
+          );
+          return;
+        }
+
+        setDeepLinkError(
+          extractErrorMessage(
+            err,
+            "Gagal memuat informasi produk dari tautan URL.",
+          ),
+        );
+        setDeepLinkCanRetry(true);
       }
     }
 
-    void loadReferences();
+    void resolveDeepLinkedProduct();
 
     return () => {
       controller.abort();
     };
-  }, [isAdmin, reloadKey]);
+  }, [
+    deepLink.initialProductId,
+    deepLink.initialType,
+    deepLink.invalidProductIdError,
+    deepLink.shouldAutoOpenCreate,
+    deepLinkRetryKey,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -164,6 +273,38 @@ export function StockMovementsView() {
         setItems(res.data);
         setMeta(res.meta);
         setPageError(null);
+
+        const observedInactive = extractObservedInactiveProducts(res.data);
+        if (observedInactive.length > 0) {
+          setObservedInactiveById((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            for (const item of observedInactive) {
+              if (!next[item.id]) {
+                next[item.id] = item;
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        }
+
+        if (staffRestrictedProductId) {
+          const matchedRow = res.data.find(
+            (mov) => mov.product.id === staffRestrictedProductId,
+          );
+          if (matchedRow) {
+            setSelectedFilterProduct(
+              toProductOption({
+                id: matchedRow.product.id,
+                sku: matchedRow.product.sku,
+                name: matchedRow.product.name,
+                unit: matchedRow.product.unit,
+                status: matchedRow.product.status,
+              }),
+            );
+          }
+        }
       } catch (err) {
         if (
           controller.signal.aborted ||
@@ -194,8 +335,130 @@ export function StockMovementsView() {
     productIdFilter,
     reloadKey,
     sortOrder,
+    staffRestrictedProductId,
     typeFilter,
   ]);
+
+  const fetchFilterProductsPage = useCallback(
+    async (params: {
+      page: number;
+      pageSize: number;
+      search: string;
+      signal: AbortSignal;
+    }) => {
+      const res = await productsService.listProducts({
+        page: params.page,
+        pageSize: params.pageSize,
+        search: params.search || undefined,
+        status: isAdmin ? "all" : "active",
+        sortBy: "name",
+        sortOrder: "asc",
+        signal: params.signal,
+      });
+      return {
+        options: res.data.map((p) =>
+          toProductOption(
+            {
+              id: p.id,
+              sku: p.sku,
+              name: p.name,
+              unit: p.unit,
+              status: p.status,
+              currentStock: p.currentStock,
+            },
+            `Stok: ${formatStockQuantity(p.currentStock, p.unit)}`,
+          ),
+        ),
+        meta: res.meta,
+      };
+    },
+    [isAdmin],
+  );
+
+  const fetchActiveFormProductsPage = useCallback(
+    async (params: {
+      page: number;
+      pageSize: number;
+      search: string;
+      signal: AbortSignal;
+    }) => {
+      const res = await productsService.listProducts({
+        page: params.page,
+        pageSize: params.pageSize,
+        search: params.search || undefined,
+        status: "active",
+        sortBy: "name",
+        sortOrder: "asc",
+        signal: params.signal,
+      });
+      return {
+        options: res.data.map((p) =>
+          toProductOption(
+            {
+              id: p.id,
+              sku: p.sku,
+              name: p.name,
+              unit: p.unit,
+              status: p.status,
+              currentStock: p.currentStock,
+            },
+            `Stok: ${formatStockQuantity(p.currentStock, p.unit)}`,
+          ),
+        ),
+        meta: res.meta,
+      };
+    },
+    [],
+  );
+
+  const fetchUsersPage = useCallback(
+    async (params: {
+      page: number;
+      pageSize: number;
+      search: string;
+      signal: AbortSignal;
+    }) => {
+      const res = await usersService.listUsers({
+        page: params.page,
+        pageSize: params.pageSize,
+        search: params.search || undefined,
+        sortBy: "name",
+        sortOrder: "asc",
+        signal: params.signal,
+      });
+      return {
+        options: res.data.map(toUserOption),
+        meta: res.meta,
+      };
+    },
+    [],
+  );
+
+  const filterProductExtraOptions = useMemo(() => {
+    const extras: ReferenceSelectOption<StockProductRef>[] = [];
+    if (!isAdmin) {
+      for (const ref of Object.values(observedInactiveById)) {
+        extras.push(toProductOption(ref, "Produk nonaktif (dari riwayat)"));
+      }
+    }
+    if (selectedFilterProduct) {
+      extras.push(selectedFilterProduct);
+    }
+    return extras;
+  }, [isAdmin, observedInactiveById, selectedFilterProduct]);
+
+  const selectedFormProductOption = useMemo(
+    () =>
+      selectedFormProduct
+        ? toProductOption(
+            selectedFormProduct,
+            selectedFormProduct.currentStock !== undefined
+              ? `Stok: ${formatStockQuantity(selectedFormProduct.currentStock, selectedFormProduct.unit)}`
+              : undefined,
+          )
+        : null,
+    [selectedFormProduct],
+  );
 
   function handleDateFilterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -212,8 +475,13 @@ export function StockMovementsView() {
 
   function handleResetFilters() {
     setProductIdFilter("");
+    setSelectedFilterProduct(null);
+    setStaffRestrictedProductId(null);
+    setDeepLinkNotice(null);
+    setDeepLinkError(null);
     setTypeFilter("");
     setCreatedByFilter("");
+    setSelectedCreatorOption(null);
     setStartDateInput("");
     setEndDateInput("");
     setAppliedRange({});
@@ -228,13 +496,10 @@ export function StockMovementsView() {
     setFormQuantity("");
     setFormReason("");
     setFormNotes("");
-    if (!formProductId && activeProducts[0]) {
-      setFormProductId(activeProducts[0].id);
-    }
     setCreateOpen(true);
   }
 
-  const selectedProduct = activeProducts.find((p) => p.id === formProductId);
+  const selectedProduct = selectedFormProduct;
 
   async function handleCreateMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -242,27 +507,18 @@ export function StockMovementsView() {
       return;
     }
 
-    if (!formProductId || !selectedProduct) {
-      setFormError("Produk aktif wajib dipilih.");
-      return;
-    }
-
-    const qtyErr = validateDecimalInput(formQuantity, {
-      fieldLabel: "Jumlah",
-      scale: 3,
-      positiveOnly: true,
-      countOnlyUnit: isCountOnlyUnit(selectedProduct.unit),
+    const validationError = validateStockMovementSubmission({
+      productId: formProductId,
+      selectedProduct,
+      quantity: formQuantity,
+      reason: formReason,
     });
-    if (qtyErr) {
-      setFormError(qtyErr);
+    if (validationError) {
+      setFormError(validationError);
       return;
     }
 
     const trimmedReason = formReason.trim();
-    if (!trimmedReason) {
-      setFormError("Alasan transaksi wajib diisi.");
-      return;
-    }
 
     setFormError(null);
     setIsSubmitting(true);
@@ -281,6 +537,11 @@ export function StockMovementsView() {
       setFormQuantity("");
       setFormReason("");
       setFormNotes("");
+      setSelectedFormProduct((prev) =>
+        prev && prev.id === created.product.id
+          ? { ...prev, currentStock: created.stockAfter }
+          : prev,
+      );
       setFeedback(
         `${created.type === "in" ? "Stock In" : "Stock Out"} ${formatStockQuantity(
           created.quantity,
@@ -316,8 +577,7 @@ export function StockMovementsView() {
           <button
             type="button"
             onClick={openCreateModal}
-            disabled={activeProducts.length === 0}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
           >
             + Catat Stock In / Out
           </button>
@@ -330,6 +590,35 @@ export function StockMovementsView() {
           message={feedback}
           onDismiss={() => setFeedback(null)}
         />
+      ) : null}
+
+      {deepLinkNotice ? (
+        <FeedbackBanner
+          variant="warning"
+          message={deepLinkNotice}
+          onDismiss={() => setDeepLinkNotice(null)}
+        />
+      ) : null}
+
+      {deepLinkError ? (
+        <div className="space-y-2">
+          <FeedbackBanner
+            variant="error"
+            message={deepLinkError}
+            onDismiss={() => setDeepLinkError(null)}
+          />
+          {deepLinkCanRetry ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDeepLinkRetryKey((k) => k + 1)}
+                className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-50"
+              >
+                Coba Lagi Muat Produk URL
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {pageError ? (
@@ -346,31 +635,40 @@ export function StockMovementsView() {
           onSubmit={handleDateFilterSubmit}
           className="flex flex-wrap items-end gap-3"
         >
-          <div className="min-w-[180px] flex-1">
+          <div className="min-w-[230px] flex-1">
             <label
               htmlFor="mov-product"
               className="block text-xs font-medium text-slate-600"
             >
               Produk
             </label>
-            <select
+            <SearchableSelect
               id="mov-product"
               value={productIdFilter}
-              onChange={(e) => {
+              onChange={(nextId, nextOption) => {
                 setIsLoading(true);
                 setPage(1);
-                setProductIdFilter(e.target.value);
+                setProductIdFilter(nextId);
+                setSelectedFilterProduct(nextOption);
+                if (!nextId) {
+                  setStaffRestrictedProductId(null);
+                  setDeepLinkNotice(null);
+                }
               }}
-              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-            >
-              <option value="">Semua Produk</option>
-              {allFilterProducts.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.sku} — {p.name}
-                  {p.status === "inactive" ? " (Nonaktif)" : ""}
-                </option>
-              ))}
-            </select>
+              fetchPage={fetchFilterProductsPage}
+              selectedOption={selectedFilterProduct}
+              extraOptions={filterProductExtraOptions}
+              allowClear
+              clearLabel="Semua Produk"
+              placeholder="Semua Produk"
+              searchPlaceholder="Cari SKU atau nama produk..."
+              emptyMessage={
+                isAdmin
+                  ? "Tidak ada produk yang cocok."
+                  : "Produk tidak ditemukan di katalog aktif / riwayat termuat."
+              }
+              refreshKey={reloadKey}
+            />
           </div>
 
           <div>
@@ -396,34 +694,49 @@ export function StockMovementsView() {
             </select>
           </div>
 
-          <div>
+          <div className={isAdmin ? "min-w-[210px]" : undefined}>
             <label
               htmlFor="mov-creator"
               className="block text-xs font-medium text-slate-600"
             >
               Pencatat
             </label>
-            <select
-              id="mov-creator"
-              value={createdByFilter}
-              onChange={(e) => {
-                setIsLoading(true);
-                setPage(1);
-                setCreatedByFilter(e.target.value);
-              }}
-              className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-            >
-              <option value="">Semua Pencatat</option>
-              {isAdmin ? (
-                userOptions.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.role})
-                  </option>
-                ))
-              ) : user ? (
-                <option value={user.id}>Transaksi Saya ({user.name})</option>
-              ) : null}
-            </select>
+            {isAdmin ? (
+              <SearchableSelect
+                id="mov-creator"
+                value={createdByFilter}
+                onChange={(nextId, nextOption) => {
+                  setIsLoading(true);
+                  setPage(1);
+                  setCreatedByFilter(nextId);
+                  setSelectedCreatorOption(nextOption);
+                }}
+                fetchPage={fetchUsersPage}
+                selectedOption={selectedCreatorOption}
+                allowClear
+                clearLabel="Semua Pencatat"
+                placeholder="Semua Pencatat"
+                searchPlaceholder="Cari nama atau email..."
+                emptyMessage="Pengguna tidak ditemukan."
+                refreshKey={reloadKey}
+              />
+            ) : (
+              <select
+                id="mov-creator"
+                value={createdByFilter}
+                onChange={(e) => {
+                  setIsLoading(true);
+                  setPage(1);
+                  setCreatedByFilter(e.target.value);
+                }}
+                className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
+              >
+                <option value="">Semua Pencatat</option>
+                {user ? (
+                  <option value={user.id}>Transaksi Saya ({user.name})</option>
+                ) : null}
+              </select>
+            )}
           </div>
 
           <div>
@@ -527,54 +840,11 @@ export function StockMovementsView() {
                 </tr>
               ) : (
                 items.map((mov) => (
-                  <tr key={mov.id} className="hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600">
-                      {formatDateTimeWib(mov.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-slate-900">
-                          {mov.product.name}
-                        </span>
-                        {mov.product.status === "inactive" ? (
-                          <StatusBadge label="Nonaktif" tone="slate" />
-                        ) : null}
-                      </div>
-                      <div className="font-mono text-xs text-slate-500">
-                        {mov.product.sku}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <StatusBadge
-                        label={mov.type === "in" ? "Stock In" : "Stock Out"}
-                        tone={mov.type === "in" ? "green" : "blue"}
-                      />
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">
-                      {formatStockQuantity(mov.quantity, mov.product.unit)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-slate-600">
-                      {formatStockQuantity(mov.stockBefore)} →{" "}
-                      <span className="font-semibold text-slate-900">
-                        {formatStockQuantity(mov.stockAfter, mov.product.unit)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-slate-900">{mov.reason}</div>
-                      <div className="text-xs text-slate-500">
-                        Oleh: {mov.createdBy.name}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setDetailMovement(mov)}
-                        className="text-xs font-medium text-slate-900 underline hover:text-slate-700"
-                      >
-                        Detail
-                      </button>
-                    </td>
-                  </tr>
+                  <StockMovementTableRow
+                    key={mov.id}
+                    movement={mov}
+                    onInspect={setDetailMovement}
+                  />
                 ))
               )}
             </tbody>
@@ -617,24 +887,21 @@ export function StockMovementsView() {
             >
               Produk Aktif
             </label>
-            <select
+            <SearchableSelect
               id="mov-form-product"
-              required
               value={formProductId}
-              onChange={(e) => setFormProductId(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-            >
-              {activeProducts.length === 0 ? (
-                <option value="">Tidak ada produk aktif</option>
-              ) : (
-                activeProducts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.sku} — {p.name} (Stok:{" "}
-                    {formatStockQuantity(p.currentStock, p.unit)})
-                  </option>
-                ))
-              )}
-            </select>
+              onChange={(nextId, nextOption) => {
+                setFormProductId(nextId);
+                setSelectedFormProduct(nextOption?.data ?? null);
+              }}
+              fetchPage={fetchActiveFormProductsPage}
+              selectedOption={selectedFormProductOption}
+              placeholder="Pilih produk aktif"
+              searchPlaceholder="Cari SKU atau nama produk aktif..."
+              emptyMessage="Tidak ada produk aktif yang cocok."
+              refreshKey={reloadKey}
+              required
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -682,14 +949,18 @@ export function StockMovementsView() {
               />
               {selectedProduct ? (
                 <p className="mt-1 text-xs text-slate-500">
-                  Stok saat ini:{" "}
-                  <span className="font-medium text-slate-700">
-                    {formatStockQuantity(
-                      selectedProduct.currentStock,
-                      selectedProduct.unit,
-                    )}
-                  </span>{" "}
-                  ·{" "}
+                  {selectedProduct.currentStock !== undefined ? (
+                    <>
+                      Stok saat ini:{" "}
+                      <span className="font-medium text-slate-700">
+                        {formatStockQuantity(
+                          selectedProduct.currentStock,
+                          selectedProduct.unit,
+                        )}
+                      </span>{" "}
+                      ·{" "}
+                    </>
+                  ) : null}
                   {isCountOnlyUnit(selectedProduct.unit)
                     ? "Wajib bilangan bulat"
                     : "Maks. 3 desimal"}
@@ -797,7 +1068,11 @@ export function StockMovementsView() {
             <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
               <dt className="text-slate-500">Stok Sebelum → Sesudah</dt>
               <dd className="font-medium text-slate-900">
-                {formatStockQuantity(detailMovement.stockBefore)} →{" "}
+                {formatStockQuantity(
+                  detailMovement.stockBefore,
+                  detailMovement.product.unit,
+                )}{" "}
+                →{" "}
                 {formatStockQuantity(
                   detailMovement.stockAfter,
                   detailMovement.product.unit,
