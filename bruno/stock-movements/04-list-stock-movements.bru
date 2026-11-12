@@ -1,0 +1,23 @@
+meta {
+  name: List Stock Movements
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}{{apiPrefix}}/stock-movements?page=1&pageSize=10&sortOrder=desc
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns paginated stock movement history without price fields", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data).to.be.an("array");
+    for (const mov of res.body.data) {
+      expect(mov.product).to.not.have.property("purchasePrice");
+      expect(mov.product).to.not.have.property("sellingPrice");
+    }
+  });
+}

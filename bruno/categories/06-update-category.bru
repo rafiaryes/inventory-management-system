@@ -1,0 +1,24 @@
+meta {
+  name: Update Category (Admin)
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}{{apiPrefix}}/categories/{{createdCategoryId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "description": "Perangkat elektronik dan perlengkapan kerja"
+  }
+}
+
+tests {
+  test("updates category metadata", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+  });
+}

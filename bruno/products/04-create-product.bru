@@ -1,0 +1,39 @@
+meta {
+  name: Create Product (Admin)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "categoryId": "{{createdCategoryId}}",
+    "sku": "BRU-MOUSE-001",
+    "name": "Mouse Wireless Bruno",
+    "description": "Mouse optik nirkabel untuk pengujian API",
+    "unit": "pcs",
+    "purchasePrice": "75000.00",
+    "sellingPrice": "110000.00",
+    "minimumStock": "5"
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body?.data?.id) {
+    bru.setEnvVar("createdProductId", res.body.data.id);
+  }
+}
+
+tests {
+  test("creates product starting at 0.000 stock", function() {
+    expect(res.status).to.equal(201);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.currentStock).to.equal("0.000");
+    expect(res.body.data.status).to.equal("active");
+  });
+}

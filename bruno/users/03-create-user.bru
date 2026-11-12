@@ -1,0 +1,35 @@
+meta {
+  name: Create User (Admin)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Staff Demo Bruno",
+    "email": "{{newUserEmail}}",
+    "password": "{{newUserPassword}}",
+    "role": "staff"
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body?.data?.id) {
+    bru.setEnvVar("createdUserId", res.body.data.id);
+  }
+}
+
+tests {
+  test("creates user with 201 and normalized email", function() {
+    expect(res.status).to.equal(201);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.role).to.equal("staff");
+    expect(res.body.data).to.not.have.property("passwordHash");
+  });
+}
