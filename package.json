@@ -1,0 +1,19 @@
+{
+  "name": "inventory-management-system",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run --parallel --filter '*' dev",
+    "dev:backend": "bun --filter backend dev",
+    "dev:frontend": "bun --filter frontend dev",
+    "build": "bun run build:backend && bun run build:frontend",
+    "build:backend": "bun --filter backend build",
+    "build:frontend": "bun --filter frontend build",
+    "typecheck": "bun run typecheck:backend && bun run typecheck:frontend",
+    "typecheck:backend": "bun --filter backend typecheck",
+    "typecheck:frontend": "bun --filter frontend typecheck",
+    "lint:frontend": "bun --filter frontend lint"
+  }
+}
