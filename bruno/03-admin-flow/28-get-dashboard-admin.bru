@@ -1,0 +1,21 @@
+meta {
+  name: Get Dashboard Summary (Admin)
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}{{apiPrefix}}/dashboard
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns price-free dashboard metrics and low-stock lists", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data).to.have.property("summary");
+    expect(res.body.data).to.have.property("lowStockProducts");
+    expect(res.body.data).to.have.property("recentStockMovements");
+  });
+}

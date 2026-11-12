@@ -1,0 +1,29 @@
+meta {
+  name: Create Stock Out (Admin)
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/stock-movements
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "productId": "{{createdProductId}}",
+    "type": "out",
+    "quantity": "4",
+    "reason": "Penjualan stok uji Bruno"
+  }
+}
+
+tests {
+  test("creates atomic Stock Out movement", function() {
+    expect(res.status).to.equal(201);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.stockBefore).to.equal("10.000");
+    expect(res.body.data.stockAfter).to.equal("6.000");
+  });
+}

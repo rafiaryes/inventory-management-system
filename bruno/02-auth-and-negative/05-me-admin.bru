@@ -1,0 +1,20 @@
+meta {
+  name: Get Current Admin Session
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}{{apiPrefix}}/auth/me
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns active authenticated admin user", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.user).to.have.property("id");
+    expect(res.body.data.user.role).to.equal("admin");
+  });
+}

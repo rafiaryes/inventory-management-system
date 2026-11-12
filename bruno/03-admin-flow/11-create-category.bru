@@ -1,0 +1,32 @@
+meta {
+  name: Create Category (Admin)
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/categories
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "{{dynamicCategoryName}}",
+    "description": "Kategori uji otomatis Bruno"
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body?.data?.id) {
+    bru.setEnvVar("createdCategoryId", res.body.data.id);
+  }
+}
+
+tests {
+  test("creates category with 201", function() {
+    expect(res.status).to.equal(201);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.isActive).to.equal(true);
+  });
+}

@@ -1,0 +1,30 @@
+meta {
+  name: Create Product Duplicate SKU (409)
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "categoryId": "{{createdCategoryId}}",
+    "sku": "{{dynamicProductSku}}",
+    "name": "Duplicate SKU Product",
+    "unit": "pcs",
+    "purchasePrice": "50000.00",
+    "sellingPrice": "75000.00"
+  }
+}
+
+tests {
+  test("rejects duplicate SKU with 409 DUPLICATE_SKU", function() {
+    expect(res.status).to.equal(409);
+    expect(res.body.success).to.equal(false);
+    expect(res.body.error.code).to.equal("DUPLICATE_SKU");
+  });
+}

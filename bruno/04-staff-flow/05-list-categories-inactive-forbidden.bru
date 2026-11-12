@@ -1,0 +1,19 @@
+meta {
+  name: List Inactive Categories Forbidden (Staff 403)
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}{{apiPrefix}}/categories?isActive=false
+  body: none
+  auth: none
+}
+
+tests {
+  test("forbids Staff from querying inactive categories with 403", function() {
+    expect(res.status).to.equal(403);
+    expect(res.body.success).to.equal(false);
+    expect(res.body.error.code).to.equal("FORBIDDEN");
+  });
+}

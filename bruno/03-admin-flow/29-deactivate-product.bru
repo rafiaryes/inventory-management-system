@@ -1,0 +1,25 @@
+meta {
+  name: Deactivate Product (Admin)
+  type: http
+  seq: 29
+}
+
+patch {
+  url: {{baseUrl}}{{apiPrefix}}/products/{{createdProductId}}/status
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "status": "inactive"
+  }
+}
+
+tests {
+  test("deactivates product cleanly", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.status).to.equal("inactive");
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Update Product (Admin)
+  type: http
+  seq: 21
+}
+
+patch {
+  url: {{baseUrl}}{{apiPrefix}}/products/{{createdProductId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Laptop Testing Bruno v2",
+    "sellingPrice": "9500000.00"
+  }
+}
+
+tests {
+  test("updates product fields for Admin", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.name).to.equal("Laptop Testing Bruno v2");
+    expect(res.body.data.sellingPrice).to.equal("9500000.00");
+  });
+}

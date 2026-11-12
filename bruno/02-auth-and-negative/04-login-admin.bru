@@ -1,0 +1,33 @@
+meta {
+  name: Login Admin (Init Dynamic Fixtures)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}{{apiPrefix}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "{{adminEmail}}",
+    "password": "{{adminPassword}}"
+  }
+}
+
+script:pre-request {
+  const runTag = `${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+  bru.setEnvVar("dynamicUserEmail", `bruno.staff.${runTag}@example.com`);
+  bru.setEnvVar("dynamicCategoryName", `Bruno Kategori ${runTag}`);
+  bru.setEnvVar("dynamicProductSku", `BRN-${runTag.toUpperCase()}`);
+}
+
+tests {
+  test("Admin login succeeds and returns role admin", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.user.role).to.equal("admin");
+  });
+}

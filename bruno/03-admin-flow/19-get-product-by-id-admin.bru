@@ -1,0 +1,21 @@
+meta {
+  name: Get Product Detail (Admin)
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}{{apiPrefix}}/products/{{createdProductId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns full product detail including prices for Admin", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.success).to.equal(true);
+    expect(res.body.data.id).to.equal(bru.getEnvVar("createdProductId"));
+    expect(res.body.data).to.have.property("purchasePrice");
+    expect(res.body.data).to.have.property("sellingPrice");
+  });
+}
